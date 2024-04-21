@@ -1,0 +1,237 @@
+{% extends "cis/logged-base.html" %}
+{%block title %}Settings{% endblock %}
+
+{% load templatehelpers %}
+{% load crispy_forms_tags %}
+
+{% block body %}
+
+<script>
+    var inputsChanged = false;
+
+    function do_bulk_action(setting, field) {
+
+        event.preventDefault();
+
+        if(inputsChanged) {
+            alert('One of more fields in form is not yet saved. Please save the form first');
+            return false
+        }
+
+        let url = "{% url 'setting:show_preview' %}"
+        let modal = "modal-bulk_actions"
+        let data = "setting=" + setting + "&field=" + field
+
+        $.ajax({
+            type: "GET",
+            url: url,
+            data: data,
+            success: function(response) {
+                $("#bulk_modal_content").html(response);
+                $("#" + modal).modal('show');
+            },
+            error: function(xhr, status, errorThrown) {
+                var span = document.createElement('span')
+                span.innerHTML = 'Error'
+                
+                swal({
+                    title: 'Unable to complete request',
+                    content: span,
+                    icon: 'warning'
+                });
+            }
+        });
+
+        return false;
+    }
+
+    
+</script>
+<div class="">
+    <div class="row">
+        <div class="col-md-6 col-sm-12">
+            <h1 class="h3 text-gray-800 mb-3"><i class="fa fa-cogs"></i>&nbsp;Settings</h1>
+        </div>
+    </div>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="/">Home</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Settings</li>
+        </ol>
+    </nav>
+</div>
+<main>
+    <div class="row">
+        <div class="col-md-12 col-sm-12 mb-4">
+            <p class="alert alert-info">Click on a category to view available settings</p>
+            <script>
+                (function ($) {
+                    $(document).on('change', 'form input, form textarea', function() {
+                        inputsChanged = true;
+                    })
+
+                    var report_id = '';
+
+                    $(document).on("click", "#report-category li", function () {
+                        //send ajax request to submit ticket
+                        $("#report-category li").removeClass("active");
+
+                        var obj = this;
+                        $(this)
+                            .addClass("active")
+                            .addClass("processing");
+
+                        $.blockUI();
+                        $.ajax({
+                            url: "{% url 'setting:records_in_category' %}",
+                            type: 'GET',
+                            data: "category=" + $(this).attr("category"),
+                            success: function (result) {
+
+                                $.unblockUI();
+                                $("ul#report-list").html("")
+                                if (result.records.length <= 0) {
+                                    $("ul#report-list").append("<li>None found</li>");
+                                } else {
+                                    result.records.forEach(function (report) {
+                                        $("ul#report-list").append(
+                                            "<li report_id='" + report.id + "'>" + report.title + "</li>"
+                                        );
+                                    });
+                                    $(obj).removeClass("processing");
+
+                                    //get the first report
+                                    $("#report-list li").first().trigger("click");
+                                }
+                            }
+                        });
+
+                        if (event.preventDefault) event.preventDefault();
+                        else event.returnValue = false;
+                    });
+
+                    $(document).on('submit', 'form', function () {
+                        let form = $('form')
+
+                        if($("input, select, textarea").hasClass('is-invalid'))
+                            $("input, select, textarea").removeClass('is-invalid')
+                        
+                        if($("input, select, textarea").next('p').length) 
+                            $("input, select, textarea").nextAll('p').empty();
+
+                        $.blockUI();
+                        
+                        $.post({
+                            url: "/ce/settings/run_record/" + report_id,
+                            data: $(form).serialize(),
+                            error: function(xhr, status, errorThrown) {
+                                $.unblockUI();
+                                let errors = $.parseJSON(xhr.responseJSON.errors);
+                                
+                                var span = document.createElement('span')
+                                span.innerHTML = xhr.responseJSON.message
+                                
+                                let first_element = ''
+                                for (var name in errors) {
+                                    for (var i in errors[name]) {
+                                        var $input = $("[name='"+ name +"']");
+                                        $input.addClass('is-invalid');
+
+                                        $input.after("<p class='invalid-feedback'><strong class=''>" + errors[name][i].message + "</strong></p>");
+                                    }
+
+                                    if(name == '__all__') {
+                                        span.innerHTML += "<br><br>" + 
+                                        errors[name][0].message
+                                    }
+
+                                    if(first_element == '')
+                                        $input.focus()
+                                    else {
+                                        first_element = '-'
+                                    }
+                                }
+
+                                swal({
+                                    title: xhr.responseJSON.message,
+                                    content: span,
+                                    icon: 'warning'
+                                });
+
+                                $(blocked_element).unblock();
+                            },
+                            success: function (result) {                                
+                                $.unblockUI();
+                                inputsChanged = false
+                                swal(
+                                    "Success",
+                                    result.message,
+                                    'success'
+                                );
+                            }
+                        });
+                        return false;
+                    })
+                    
+                    //show report description
+                    $(document).on("click", "#report-list li", function () {
+                        var obj = this;
+
+                        $("#report-list li").removeClass("active");
+                        $(this)
+                            .addClass("active")
+                            .addClass("processing");
+                        report_id = $(this).attr("report_id");
+
+                        $.blockUI();
+                        $.ajax({
+                            url: "{% url 'setting:record_details' %}",
+                            type: 'GET',
+                            data: "report_id=" + $(this).attr("report_id"),
+                            success: function (result) {
+                                $.unblockUI();
+                                if (result.status == 'success') {
+                                    $(obj).removeClass("processing");
+                                    $("#cepm-report-container").html(result.report);
+
+                                    $(".dateinput").datepicker();
+
+                                    $('.dateinput').mask('00/00/0000');
+                                } else {
+                                    alert(result.message)
+                                }
+                            }
+                        });
+
+                        if (event.preventDefault) event.preventDefault();
+                        else event.returnValue = false;
+                    });
+
+                })(jQuery);
+            </script>
+            <div id="report-list-container" class="well well-sm bg-white pt-3 p-2">
+
+                <div id="cepm-report-category" style="float: left; width: 30%;">
+                    <div style="border-right: 2px solid #ddd;">
+                        <ul id="report-category" style="padding: 0.5em 0 0.5em 1em;">
+                            {% for category, category_title in categories %}
+                            <li category="{{category}}">{{category_title}}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                <div style="float: left; width: 70%;">
+                    <ul id="report-list" style="padding: 0.5em 1em;">
+                    </ul>
+                </div>
+                <div style="clear: both;"></div>
+            </div>
+            <div style="clear: both;"></div>
+            <div id="cepm-report-container" style="margin: 0.5em 0; background: #fff; float: left; width: 100%;">
+
+            </div>
+            &nbsp;
+        </div>
+    </div> <!-- end row -->
+</main>
+{% endblock %}

@@ -1,0 +1,10 @@
+include LICENSE
+include README.rst
+recursive-include setting/admin *
+recursive-include setting/models *
+recursive-include setting/urls *
+recursive-include setting/views *
+recursive-include setting/static *
+recursive-include setting/templates *
+recursive-include setting/management *
+recursive-include setting/migrations *
