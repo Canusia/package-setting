@@ -25,7 +25,7 @@ class Command(BaseCommand):
         for record in records:
              
             if not SettingRecord.objects.filter(name=record['name']).exists():
-                reports_path = record.get('app', 'cis')
+                reports_path = record.get('app', 'cis') + '.settings'
                 report_name = record['name']
 
                 report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
