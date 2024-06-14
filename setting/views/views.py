@@ -186,6 +186,8 @@ def show_preview(request):
     field_name = request.GET.get('field')
 
     try:
+        report = get_object_or_404(SettingRecord, name=report_name)
+        
         # reports_path = getattr(settings, 'MY_CE').get('settings_repo', '')
         reports_path = report.app + '.settings'        
         report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
