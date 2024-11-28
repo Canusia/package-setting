@@ -6,9 +6,10 @@ from .models.setting import SettingRecord
 @admin.register(SettingRecord)
 class SettingRecordAdmin(admin.ModelAdmin):
     list_display = (
-        'name', 'title', 'categories'
+        'name', 'app' 'title', 'categories'
     )
     fields = [
+        'app',
         'name',
         'title',
         'description',
