@@ -26,11 +26,11 @@ class SettingRecord(models.Model):
     INSTRUCTORS = 'Instructors'
 
     CATEGORIES = [
-        (1, STUDENTS),
-        (2, HIGH_SCHOOLS),
-        (3, CLASSES),
-        (4, MISC),
-        (5, INSTRUCTORS)
+        ('1', STUDENTS),
+        ('2', HIGH_SCHOOLS),
+        ('3', CLASSES),
+        ('4', MISC),
+        ('5', INSTRUCTORS)
     ]
     categories = MultiSelectField(
         choices=CATEGORIES,
