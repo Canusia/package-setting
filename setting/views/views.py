@@ -160,7 +160,10 @@ def record_details(request, report_id=None):
             {
                 'form_html': form_html,
                 'title': report.title,
-                'description': report.description + '<br><p class="alert text-white">' + report_name + '</p>'
+                'description': report.description + '<br><p class="alert text-white">' + report_name + '</p>',
+                'raw_description': report.description,
+                'is_superuser': request.user.is_superuser,
+                'record_id': str(report.id),
             }
         )
         data = {
@@ -244,3 +247,27 @@ def run_record(request, record_id):
                 'details': 'Exception - ' + str(e),
                 'status': 'error'
             }, status=400)
+
+
+@login_required(login_url='/')
+def update_setting(request):
+    if not request.user.is_superuser:
+        return JsonResponse({'status': 'error', 'message': 'Permission denied'}, status=403)
+
+    if request.method != 'POST':
+        return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
+
+    record_id = request.POST.get('record_id')
+    record = get_object_or_404(SettingRecord, pk=record_id)
+
+    title = request.POST.get('title', '').strip()
+    description = request.POST.get('description', '').strip()
+
+    if not title:
+        return JsonResponse({'status': 'error', 'message': 'Title is required'}, status=400)
+
+    record.title = title
+    record.description = description
+    record.save()
+
+    return JsonResponse({'status': 'success', 'message': 'Setting updated successfully'})

@@ -9,7 +9,8 @@ from ..views.views import (
     run_record,
     records,
     show_preview,
-    add_new as add_new_setting
+    add_new as add_new_setting,
+    update_setting
 )
 
 app_name = 'setting'
@@ -22,4 +23,5 @@ urlpatterns = [
     path('run_record/<uuid:record_id>', run_record, name='run_record'),
 
     path('add_new', add_new_setting, name='add_new'),
+    path('update_setting/', update_setting, name='update_setting'),
 ]

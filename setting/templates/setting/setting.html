@@ -5,7 +5,7 @@
 <div class="row">
     <div class="col-12">
         <div class="p-3">
-            <h3 class="mb-3">{{title}}</h3>
+            <h3 id="setting-title" class="mb-3">{{title}}</h3>
         </div>
     </div>
     <div class="col-6">
@@ -17,9 +17,87 @@
         <div class="p-3">
             <div class="card bg-gray-100">
                 <div class="card-body">
+                    {% if is_superuser %}
+                    <div id="description-display">
+                        {{description|safe}}
+                        <hr>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-edit-setting">
+                            <i class="fa fa-pencil"></i> Edit
+                        </button>
+                    </div>
+                    <div id="description-edit" style="display: none;">
+                        <div class="form-group mb-3">
+                            <label for="edit-setting-title"><strong>Title</strong></label>
+                            <input type="text" class="form-control" id="edit-setting-title" value="{{title}}">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label for="edit-setting-description"><strong>Description</strong></label>
+                            <textarea class="form-control" id="edit-setting-description" rows="3">{{raw_description}}</textarea>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary" id="btn-save-setting">Save</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="btn-cancel-edit">Cancel</button>
+                    </div>
+                    {% else %}
                     {{description|safe}}
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
 </div>
+
+{% if is_superuser %}
+<script>
+(function($) {
+    var recordId = '{{record_id}}';
+
+    $(document).on('click', '#btn-edit-setting', function() {
+        $('#description-display').hide();
+        $('#description-edit').show();
+    });
+
+    $(document).on('click', '#btn-cancel-edit', function() {
+        $('#description-edit').hide();
+        $('#description-display').show();
+    });
+
+    $(document).on('click', '#btn-save-setting', function() {
+        var title = $('#edit-setting-title').val().trim();
+        var description = $('#edit-setting-description').val().trim();
+        var csrftoken = $('[name=csrfmiddlewaretoken]').val();
+
+        if (!title) {
+            swal('Error', 'Title is required', 'error');
+            return;
+        }
+
+        $.post({
+            url: 'update_setting/',
+            data: {
+                record_id: recordId,
+                title: title,
+                description: description,
+                csrfmiddlewaretoken: csrftoken
+            },
+            success: function(response) {
+                $('#setting-title').text(title);
+                $('#report-list li.active').text(title);
+
+                var displayHtml = (description || '-');
+                displayHtml += '<hr><button type="button" class="btn btn-sm btn-outline-secondary" id="btn-edit-setting">';
+                displayHtml += '<i class="fa fa-pencil"></i> Edit</button>';
+                $('#description-display').html(displayHtml);
+
+                $('#description-edit').hide();
+                $('#description-display').show();
+
+                swal('Success', response.message, 'success');
+            },
+            error: function() {
+                swal('Error', 'Failed to update setting', 'error');
+            }
+        });
+    });
+})(jQuery);
+</script>
+{% endif %}
