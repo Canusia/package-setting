@@ -1,3 +1,4 @@
+import json
 import logging
 
 from django.conf import settings
@@ -155,6 +156,13 @@ def record_details(request, report_id=None):
         ctx.update(csrf(request))
         form_html = render_crispy_form(form, context=ctx)
 
+        setting_json = '{}'
+        try:
+            setting_obj = Setting.objects.get(key=report_class.key)
+            setting_json = json.dumps(setting_obj.value, indent=2)
+        except Setting.DoesNotExist:
+            pass
+
         report_html = render_to_string(
             'setting/setting.html',
             {
@@ -164,6 +172,7 @@ def record_details(request, report_id=None):
                 'raw_description': report.description,
                 'is_superuser': request.user.is_superuser,
                 'record_id': str(report.id),
+                'setting_json': setting_json,
             }
         )
         data = {
@@ -262,6 +271,7 @@ def update_setting(request):
 
     title = request.POST.get('title', '').strip()
     description = request.POST.get('description', '').strip()
+    setting_value = request.POST.get('setting_value', '').strip()
 
     if not title:
         return JsonResponse({'status': 'error', 'message': 'Title is required'}, status=400)
@@ -269,5 +279,17 @@ def update_setting(request):
     record.title = title
     record.description = description
     record.save()
+
+    if setting_value:
+        try:
+            parsed = json.loads(setting_value)
+            report_name = record.name
+            reports_path = record.app + '.settings'
+            report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
+            setting_obj, created = Setting.objects.get_or_create(key=report_class.key)
+            setting_obj.value = parsed
+            setting_obj.save()
+        except json.JSONDecodeError:
+            return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
 
     return JsonResponse({'status': 'success', 'message': 'Setting updated successfully'})

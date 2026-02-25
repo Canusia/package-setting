@@ -15,31 +15,61 @@
     </div>
     <div class="col-6">
         <div class="p-3">
-            <div class="card bg-gray-100">
-                <div class="card-body">
-                    {% if is_superuser %}
-                    <div id="description-display">
-                        {{description|safe}}
-                        <hr>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-edit-setting">
-                            <i class="fa fa-pencil"></i> Edit
-                        </button>
-                    </div>
-                    <div id="description-edit" style="display: none;">
-                        <div class="form-group mb-3">
-                            <label for="edit-setting-title"><strong>Title</strong></label>
-                            <input type="text" class="form-control" id="edit-setting-title" value="{{title}}">
+            <ul class="nav nav-tabs">
+                <li class="nav-item">
+                    <a class="nav-link active" data-toggle="tab" href="#description">Description</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-toggle="tab" href="#setting-value">Setting</a>
+                </li>
+            </ul>
+
+            <div class="tab-content">
+                <div class="tab-pane active" id="description">
+                    <div class="card border-top-0">
+                        <div class="card-body">
+                            {% if is_superuser %}
+                            <div id="description-display">
+                                {{description|safe}}
+                                <hr>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-edit-setting">
+                                    <i class="fa fa-pencil"></i> Edit
+                                </button>
+                            </div>
+                            <div id="description-edit" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label for="edit-setting-title"><strong>Title</strong></label>
+                                    <input type="text" class="form-control" id="edit-setting-title" value="{{title}}">
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label for="edit-setting-description"><strong>Description</strong></label>
+                                    <textarea class="form-control" id="edit-setting-description" rows="3">{{raw_description}}</textarea>
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label for="edit-setting-json"><strong>Setting JSON</strong></label>
+                                    <textarea class="form-control" id="edit-setting-json" rows="8" style="font-family: monospace; font-size: 0.85em;">{{setting_json}}</textarea>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-primary" id="btn-save-setting">Save</button>
+                                <button type="button" class="btn btn-sm btn-secondary" id="btn-cancel-edit">Cancel</button>
+                            </div>
+                            {% else %}
+                            {{description|safe}}
+                            {% endif %}
                         </div>
-                        <div class="form-group mb-3">
-                            <label for="edit-setting-description"><strong>Description</strong></label>
-                            <textarea class="form-control" id="edit-setting-description" rows="3">{{raw_description}}</textarea>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-primary" id="btn-save-setting">Save</button>
-                        <button type="button" class="btn btn-sm btn-secondary" id="btn-cancel-edit">Cancel</button>
                     </div>
-                    {% else %}
-                    {{description|safe}}
-                    {% endif %}
+                </div>
+
+                <div class="tab-pane" id="setting-value">
+                    <div class="card border-top-0">
+                        <div class="card-body">
+                            <div class="mb-2 text-right">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-copy-json">
+                                    <i class="fa fa-clipboard"></i> Copy
+                                </button>
+                            </div>
+                            <pre id="setting-json-display" style="white-space: pre-wrap; word-wrap: break-word;">{{setting_json}}</pre>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -50,6 +80,15 @@
 <script>
 (function($) {
     var recordId = '{{record_id}}';
+
+    $(document).on('click', '#btn-copy-json', function() {
+        var jsonText = $('#setting-json-display').text();
+        navigator.clipboard.writeText(jsonText).then(function() {
+            swal('Copied', 'JSON copied to clipboard', 'success');
+        }, function() {
+            swal('Error', 'Failed to copy to clipboard', 'error');
+        });
+    });
 
     $(document).on('click', '#btn-edit-setting', function() {
         $('#description-display').hide();
@@ -64,11 +103,21 @@
     $(document).on('click', '#btn-save-setting', function() {
         var title = $('#edit-setting-title').val().trim();
         var description = $('#edit-setting-description').val().trim();
+        var settingJson = $('#edit-setting-json').val().trim();
         var csrftoken = $('[name=csrfmiddlewaretoken]').val();
 
         if (!title) {
             swal('Error', 'Title is required', 'error');
             return;
+        }
+
+        if (settingJson) {
+            try {
+                JSON.parse(settingJson);
+            } catch (e) {
+                swal('Error', 'Invalid JSON format', 'error');
+                return;
+            }
         }
 
         $.post({
@@ -77,6 +126,7 @@
                 record_id: recordId,
                 title: title,
                 description: description,
+                setting_value: settingJson,
                 csrfmiddlewaretoken: csrftoken
             },
             success: function(response) {
@@ -88,13 +138,25 @@
                 displayHtml += '<i class="fa fa-pencil"></i> Edit</button>';
                 $('#description-display').html(displayHtml);
 
+                if (settingJson) {
+                    try {
+                        var formatted = JSON.stringify(JSON.parse(settingJson), null, 2);
+                        $('#setting-json-display').text(formatted);
+                        $('#edit-setting-json').val(formatted);
+                    } catch (e) {}
+                }
+
                 $('#description-edit').hide();
                 $('#description-display').show();
 
                 swal('Success', response.message, 'success');
             },
-            error: function() {
-                swal('Error', 'Failed to update setting', 'error');
+            error: function(xhr) {
+                var msg = 'Failed to update setting';
+                if (xhr.responseJSON && xhr.responseJSON.message) {
+                    msg = xhr.responseJSON.message;
+                }
+                swal('Error', msg, 'error');
             }
         });
     });
