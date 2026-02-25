@@ -20,6 +20,8 @@ Dynamic settings/configurator registry and management interface. Apps register c
 - `records_in_category/` - AJAX: Get settings for category
 - `record_details/` - AJAX: Load setting form dynamically
 - `run_record/<uuid>` - POST: Save setting values
+- `update_setting/` - POST: Update setting metadata (title, description) and JSON value (superuser only)
+- `setting_history/` - AJAX: Get change history for a setting (DataTables JSON)
 - `add_new` - Register new configurator
 
 ## Commands
@@ -67,15 +69,24 @@ class my_setting(SettingForm):
         # Optional: Preview field behavior
 ```
 
+## Setting Detail UI (`setting.html`)
+
+The setting detail view has three tabs:
+
+1. **Description** — Shows setting description. Superusers see an inline Edit button to update title, description, and raw JSON value via `update_setting/` endpoint.
+2. **Setting** — Displays the current JSON value (`cis.Setting.value`) in a formatted `<pre>` block with a Copy to Clipboard button.
+3. **Change Log** — DataTable showing change history via `django-simple-history`. Columns: Date, User, Action (Created/Changed/Deleted badges), Value (truncated preview, click for full JSON modal). Lazy-loads on tab show; auto-reloads after saves.
+
 ## Integration
 
 - **Storage:** Values stored in `cis.models.settings.Setting` (key-value JSONField)
-- **Permissions:** Requires `user.can_edit_users`
-- **UI:** AJAX-driven forms with crispy-forms rendering
+- **Change Tracking:** `cis.Setting` uses `django-simple-history` (`HistoricalRecords`) to track all value changes with user and timestamp
+- **Permissions:** Requires `user.can_edit_users`; inline editing requires `is_superuser`
+- **UI:** AJAX-driven forms with crispy-forms rendering, Bootstrap nav-tabs, DataTables for history
 - **Dynamic Loading:** Uses `import_string()` to load setting classes at runtime
 
 ## Architecture
 
 - `SettingRecord` = Metadata about available settings (registry)
-- `cis.Setting` = Actual configuration values (storage)
+- `cis.Setting` = Actual configuration values (storage, with `HistoricalRecords`)
 - Setting classes = Form definition and save/load logic
