@@ -160,9 +160,14 @@
 
                                 $(blocked_element).unblock();
                             },
-                            success: function (result) {                                
+                            success: function (result) {
                                 $.unblockUI();
                                 inputsChanged = false
+
+                                if ($.fn.DataTable.isDataTable('#history-table')) {
+                                    $('#history-table').DataTable().ajax.reload();
+                                }
+
                                 swal(
                                     "Success",
                                     result.message,

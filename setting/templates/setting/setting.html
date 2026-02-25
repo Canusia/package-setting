@@ -22,6 +22,9 @@
                 <li class="nav-item">
                     <a class="nav-link" data-toggle="tab" href="#setting-value">Setting</a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link" data-toggle="tab" href="#change-log">Change Log</a>
+                </li>
             </ul>
 
             <div class="tab-content">
@@ -71,14 +74,86 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="tab-pane" id="change-log">
+                    <div class="card border-top-0">
+                        <div class="card-body">
+                            <table id="history-table" style="width: 100%;" class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>User</th>
+                                        <th>Action</th>
+                                        <th>Value</th>
+                                    </tr>
+                                </thead>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
-{% if is_superuser %}
 <script>
 (function($) {
+    var settingKey = '{{setting_key}}';
+    var historyLoaded = false;
+
+    $(document).on('shown.bs.tab', 'a[href="#change-log"]', function() {
+        if (historyLoaded) return;
+        historyLoaded = true;
+
+        $("#history-table").DataTable({
+            order: [[0, 'desc']],
+            searching: false,
+            paging: true,
+            pageLength: 10,
+            ajax: {
+                url: 'setting_history/',
+                data: function(d) {
+                    d.setting_key = settingKey;
+                }
+            },
+            columns: [
+                { data: 'history_date' },
+                { data: 'history_user' },
+                {
+                    data: 'history_type',
+                    render: function(data) {
+                        if (data === 'Created') {
+                            return '<span class="badge badge-success">Created</span>';
+                        } else if (data === 'Changed') {
+                            return '<span class="badge badge-warning">Changed</span>';
+                        } else if (data === 'Deleted') {
+                            return '<span class="badge badge-danger">Deleted</span>';
+                        }
+                        return data;
+                    }
+                },
+                {
+                    data: 'value',
+                    render: function(data) {
+                        var preview = data.length > 80 ? data.substring(0, 80) + '...' : data;
+                        return '<code class="history-value-preview" style="cursor:pointer; font-size:0.85em;" title="Click to view full JSON">' +
+                            $('<span>').text(preview).html() + '</code>';
+                    }
+                }
+            ]
+        });
+    });
+
+    $(document).on('click', '.history-value-preview', function() {
+        var row = $(this).closest('tr');
+        var table = $("#history-table").DataTable();
+        var rowData = table.row(row).data();
+        if (rowData) {
+            swal({ title: 'Setting Value', text: rowData.value, customClass: 'swal-wide' });
+        }
+    });
+
+{% if is_superuser %}
     var recordId = '{{record_id}}';
 
     $(document).on('click', '#btn-copy-json', function() {
@@ -149,6 +224,11 @@
                 $('#description-edit').hide();
                 $('#description-display').show();
 
+                // Reload history table if it was loaded
+                if (historyLoaded) {
+                    $("#history-table").DataTable().ajax.reload();
+                }
+
                 swal('Success', response.message, 'success');
             },
             error: function(xhr) {
@@ -160,6 +240,6 @@
             }
         });
     });
+{% endif %}
 })(jQuery);
 </script>
-{% endif %}

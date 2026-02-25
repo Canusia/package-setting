@@ -173,6 +173,7 @@ def record_details(request, report_id=None):
                 'is_superuser': request.user.is_superuser,
                 'record_id': str(report.id),
                 'setting_json': setting_json,
+                'setting_key': report_class.key,
             }
         )
         data = {
@@ -293,3 +294,25 @@ def update_setting(request):
             return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
 
     return JsonResponse({'status': 'success', 'message': 'Setting updated successfully'})
+
+
+@login_required(login_url='/')
+def setting_history(request):
+    if not request.user.can_edit_users:
+        return JsonResponse({'data': []})
+
+    setting_key = request.GET.get('setting_key', '')
+    try:
+        setting_obj = Setting.objects.get(key=setting_key)
+        history = setting_obj.history.all().order_by('-history_date')
+        records = []
+        for h in history:
+            records.append({
+                'history_date': h.history_date.strftime('%Y-%m-%d %H:%M:%S'),
+                'history_user': str(h.history_user) if h.history_user else '-',
+                'history_type': h.get_history_type_display(),
+                'value': json.dumps(h.value, indent=2),
+            })
+        return JsonResponse({'data': records})
+    except Setting.DoesNotExist:
+        return JsonResponse({'data': []})
