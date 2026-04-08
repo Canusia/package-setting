@@ -47,16 +47,32 @@ Installation
         value = JSONField(blank=True)
         history = HistoricalRecords()
 
-4. In ``myce/urls.py``::
+4. Add the static files path to ``STATICFILES_DIRS`` in ``settings.py``::
+
+    import importlib.util
+
+    def get_package_path(package_name):
+        spec = importlib.util.find_spec(package_name)
+        return os.path.dirname(spec.origin) if spec else None
+
+    STATICFILES_DIRS = [
+        ...
+        # Submodule install
+        os.path.join(get_package_path("setting.setting"), 'staticfiles')
+        if importlib.util.find_spec('setting.setting')
+        else os.path.join(get_package_path("setting"), 'staticfiles') if get_package_path("setting") else None,
+    ]
+
+5. In ``myce/urls.py``::
 
     path('ce/settings/', include('setting.urls.ce')),
 
-5. Run migrations::
+7. Run migrations::
 
     python manage.py makemigrations cis
     python manage.py migrate
 
-6. Register settings from all apps::
+8. Register settings from all apps::
 
     python manage.py register_settings
 
