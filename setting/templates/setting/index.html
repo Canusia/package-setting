@@ -385,7 +385,7 @@
                                     if (result.records && result.records.length) {
                                         result.records.forEach(function(report) {
                                             $("ul#report-list").append(
-                                                "<li report_id='" + report.id + "'>" + report.title + "</li>"
+                                                "<li report_id='" + report.id + "'>" + escapeHtml(report.title) + "</li>"
                                             );
                                         });
                                     }
@@ -420,17 +420,21 @@
                         }
 
                         function findInRecordContent(done) {
-                            var idx = 0;
+                            if (!searchIndex.length) {
+                                done([]);
+                                return;
+                            }
+
                             var results = [];
+                            var remaining = searchIndex.length;
 
-                            function next() {
-                                if (idx >= searchIndex.length) {
-                                    done(results);
-                                    return;
-                                }
-
-                                var item = searchIndex[idx++];
-                                fetchRecordDetails(item.reportId, function(result) {
+                            searchIndex.forEach(function(item) {
+                                $.ajax({
+                                    url: "{% url 'setting:record_details' %}",
+                                    type: "GET",
+                                    dataType: "json",
+                                    data: { report_id: item.reportId }
+                                }).done(function(result) {
                                     var html = result && result.report ? result.report : "";
                                     var plain = normalizeText(stripHtml(html));
                                     if (result && result.status === "success" && plain.indexOf(normalizedTerm) !== -1) {
@@ -449,11 +453,10 @@
                                             previewStatus: "resolving"
                                         });
                                     }
-                                    next();
+                                }).always(function() {
+                                    if (--remaining === 0) done(results);
                                 });
-                            }
-
-                            next();
+                            });
                         }
 
                         function collectMatches() {
