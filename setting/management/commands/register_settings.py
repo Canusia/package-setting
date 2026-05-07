@@ -1,3 +1,5 @@
+import importlib.util
+
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import Group
 from django.conf import settings
@@ -5,7 +7,10 @@ from django.http import HttpRequest
 from django.db.utils import IntegrityError
 from django.utils.module_loading import import_string
 
-from setting.models.setting import SettingRecord
+if importlib.util.find_spec('setting.setting'):
+    from setting.setting.models.setting import SettingRecord
+else:
+    from setting.models.setting import SettingRecord
 class Command(BaseCommand):
     '''
     Registers settings in DB
