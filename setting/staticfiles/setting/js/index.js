@@ -55,6 +55,69 @@ function do_bulk_action(setting, field) {
         return (value || '').toString().trim().toLowerCase();
     }
 
+    function stripHtml(value) {
+        return $("<div>").html(value || "").text();
+    }
+
+    // Rich-text configurators store HTML in textarea values as literal markup; decode entities and strip tags.
+    function htmlToPlainText(value) {
+        if (!value) return '';
+        var text = stripHtml(String(value));
+        text = text.replace(/<[^>]+>/g, '');
+        return text.replace(/\s+/g, ' ').trim();
+    }
+
+    function collectJsonStrings(obj, parts) {
+        if (obj === null || obj === undefined) return;
+        if (typeof obj === 'string') {
+            parts.push(htmlToPlainText(obj));
+        } else if (Array.isArray(obj)) {
+            obj.forEach(function (item) {
+                collectJsonStrings(item, parts);
+            });
+        } else if (typeof obj === 'object') {
+            Object.keys(obj).forEach(function (key) {
+                collectJsonStrings(obj[key], parts);
+            });
+        }
+    }
+
+    function extractSearchableTextParts(reportHtml) {
+        var parts = [];
+        var html = reportHtml || '';
+
+        parts.push(htmlToPlainText(stripHtml(html)));
+
+        var $doc = $("<div>").html(html);
+        $doc.find("textarea, input[type='text'], input[type='email'], input[type='search']").each(function () {
+            var v = $(this).val();
+            if (v) parts.push(htmlToPlainText(v));
+        });
+
+        var jsonText = $doc.find("#setting-json-display").text();
+        if (jsonText) {
+            try {
+                collectJsonStrings(JSON.parse(jsonText), parts);
+            } catch (e) {
+                parts.push(htmlToPlainText(jsonText));
+            }
+        }
+
+        return parts.join(' ').replace(/\s+/g, ' ').trim();
+    }
+
+    function extractSearchableText(reportHtml) {
+        return normalizeText(extractSearchableTextParts(reportHtml));
+    }
+
+    function fieldValueForSearch($field) {
+        var raw = $field.val() || '';
+        if ($field.is('textarea') || $field.is("input[type='text'], input[type='email'], input[type='search']")) {
+            return htmlToPlainText(raw);
+        }
+        return raw;
+    }
+
     function clearSearchDropdown() {
         $("#setting-search-dropdown").empty().addClass("d-none");
     }
@@ -68,7 +131,7 @@ function do_bulk_action(setting, field) {
 
         function scoreField($field) {
             var s = 0;
-            var val = normalizeText($field.val());
+            var val = normalizeText(fieldValueForSearch($field));
             if (term && val.indexOf(term) !== -1) s += 100;
 
             var $group = $field.closest(".form-group");
@@ -251,10 +314,6 @@ function do_bulk_action(setting, field) {
             return $("<div>").text(value || "").html();
         }
 
-        function stripHtml(value) {
-            return $("<div>").html(value || "").text();
-        }
-
         function buildSnippetFromText(text, searchTerm) {
             var raw = (text || "").replace(/\s+/g, " ").trim();
             if (!raw) return "No preview available.";
@@ -373,7 +432,7 @@ function do_bulk_action(setting, field) {
                     data: { report_id: item.reportId }
                 }).done(function (result) {
                     var html = result && result.report ? result.report : "";
-                    var plain = normalizeText(stripHtml(html));
+                    var plain = extractSearchableText(html);
                     if (result && result.status === "success" && plain.indexOf(normalizedTerm) !== -1) {
                         results.push({
                             category: item.category,
@@ -382,7 +441,7 @@ function do_bulk_action(setting, field) {
                             reportTitle: item.reportTitle,
                             matchType: "content",
                             matchTypeLabel: "content",
-                            snippet: buildSnippetFromText(stripHtml(html), normalizedTerm),
+                            snippet: buildSnippetFromText(extractSearchableTextParts(html), normalizedTerm),
                             uiTargetType: "page",
                             uiTargetSelector: "",
                             uiRoute: "",
