@@ -33,7 +33,15 @@ from cis.menu import cis_menu, draw_menu, HS_ADMIN_MENU
 
 logger = logging.getLogger(__name__)
 
-user_passes_test(user_has_cis_role, login_url='/')
+def _user_can_manage_settings(user):
+    """All CE settings are CE-only to view/edit. Superusers (platform admins)
+    retain access. Anonymous users are rejected (user_has_cis_role guards that)."""
+    return user_has_cis_role(user) or getattr(user, 'is_superuser', False)
+
+
+def _settings_forbidden():
+    return JsonResponse(
+        {'status': 'error', 'message': 'Permission denied'}, status=403)
 
 
 def add_new(request):
@@ -41,7 +49,7 @@ def add_new(request):
     Add new page
     '''
 
-    if not request.user.can_edit_users:
+    if not _user_can_manage_settings(request.user):
         messages.add_message(
             request,
             messages.SUCCESS,
@@ -100,7 +108,7 @@ def add_new(request):
 def records(request):
     template = 'setting/index.html'
 
-    if not request.user.can_edit_users:
+    if not _user_can_manage_settings(request.user):
         messages.add_message(
             request,
             messages.SUCCESS,
@@ -120,6 +128,9 @@ def records(request):
 
 @login_required(login_url='/')
 def records_in_category(request):
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
+
     category = request.GET.get('category', None)
     if category:
         records_available = SettingRecord.get_records_in_category(
@@ -131,13 +142,8 @@ def records_in_category(request):
 
 def record_details(request, report_id=None):
 
-    if not request.user.can_edit_users:
-        messages.add_message(
-            request,
-            messages.SUCCESS,
-            'You do not have permission to edit this',
-            'list-group-item-danger')
-        return redirect('cis:dashboard')
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
 
     if not report_id:
         report_id = request.GET.get('report_id', None)
@@ -195,6 +201,9 @@ def record_details(request, report_id=None):
     return JsonResponse(data)
 
 def show_preview(request):
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
+
     report_name = request.GET.get('setting')
     field_name = request.GET.get('field')
 
@@ -226,6 +235,9 @@ def show_preview(request):
         }, status=400)
     
 def run_record(request, record_id):
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
+
     if request.method == 'POST':
         report = get_object_or_404(SettingRecord, pk=record_id)
         report_name = report.name
@@ -258,11 +270,15 @@ def run_record(request, record_id):
                 'status': 'error'
             }, status=400)
 
+    return JsonResponse({
+        'status': 'error',
+        'message': 'Unable to locate setting,'
+    }, status=400)
 
 @login_required(login_url='/')
 def update_setting(request):
-    if not request.user.is_superuser:
-        return JsonResponse({'status': 'error', 'message': 'Permission denied'}, status=403)
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
 
     if request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=405)
@@ -298,7 +314,7 @@ def update_setting(request):
 
 @login_required(login_url='/')
 def setting_history(request):
-    if not request.user.can_edit_users:
+    if not _user_can_manage_settings(request.user):
         return JsonResponse({'data': []})
 
     setting_key = request.GET.get('setting_key', '')
