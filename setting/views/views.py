@@ -68,16 +68,37 @@ def add_new(request):
             record.save()
 
             try:
-                # reports_path = getattr(settings, 'MY_CE').get(
-                #     'settings_repo', '')
                 report_path = request.POST.get("app", 'cis') + '.settings'
                 report_name = request.POST.get("name")
-                report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
+                report_class = import_string(f'{report_path}.{report_name}.{report_name}')
 
                 report = report_class(request)
-                report.install()
-            except:
-                pass
+
+                # Seed defaults only when nothing is stored yet. SettingRecord
+                # and Setting live in different tables and can drift apart, so
+                # re-adding a setting through this form can land on a key that
+                # already holds a tenant's customised configuration. install()
+                # used to be reached unconditionally here, which would replace
+                # it (Canusia/package-setting#3). register_settings guards its
+                # own install() call the same way.
+                if not Setting.objects.filter(key=report.key).exists():
+                    report.install()
+            except Exception:
+                # Previously a bare `except: pass`, which reported success to
+                # the admin whatever happened -- and hid the fact that this
+                # block referenced an undefined `reports_path` and so raised
+                # NameError on every call, meaning defaults were never
+                # installed at all. Still non-fatal (the SettingRecord is
+                # saved and the setting is editable), but no longer silent.
+                logger.exception(
+                    'Could not install defaults for setting %r in app %r',
+                    request.POST.get('name'), request.POST.get('app'))
+                messages.add_message(
+                    request,
+                    messages.WARNING,
+                    'The setting was added, but its default values could not '
+                    'be installed. Open it and save to set them.',
+                    'list-group-item-warning')
 
             messages.add_message(
                 request,
