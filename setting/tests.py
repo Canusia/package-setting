@@ -114,9 +114,9 @@ class MultiCampusUpdateSettingTests(TestCase):
         self.user = User.objects.create_user(
             username=f'ce_{_sfx()}', email=f'ce_{_sfx()}@x.com', password='x')
         self.user.groups.add(Group.objects.get_or_create(name='ce')[0])
-        self.user.campus = {'process_campus': [str(self.campus.id)],
-                            'manage_settings': 'Yes'}
+        self.user.campus = {'manage_settings': 'Yes'}
         self.user.save()
+        self.user.set_process_campuses([str(self.campus.id)])
         self.record = SettingRecord.objects.create(
             app=SETTING_APP, name=SETTING_NAME, title='Support Docs',
             description='d')
