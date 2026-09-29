@@ -33,10 +33,22 @@ from cis.menu import cis_menu, draw_menu, HS_ADMIN_MENU
 
 logger = logging.getLogger(__name__)
 
-def _user_can_manage_settings(user):
-    """All CE settings are CE-only to view/edit. Superusers (platform admins)
-    retain access. Anonymous users are rejected (user_has_cis_role guards that)."""
-    return user_has_cis_role(user) or getattr(user, 'is_superuser', False)
+try:
+    # package-cis >= v0.1.0a: per-campus settings access (MC-06, cis #30).
+    from cis.campus_gate import (
+        can_edit_setting_descriptions, can_edit_setting_key,
+        can_manage_settings as _user_can_manage_settings)
+except ImportError:
+    def _user_can_manage_settings(user):
+        """All CE settings are CE-only to view/edit. Superusers (platform admins)
+        retain access. Anonymous users are rejected (user_has_cis_role guards that)."""
+        return user_has_cis_role(user) or getattr(user, 'is_superuser', False)
+
+    def can_edit_setting_key(user, key):
+        return _user_can_manage_settings(user)
+
+    def can_edit_setting_descriptions(user):
+        return _user_can_manage_settings(user)
 
 
 def _settings_forbidden():
@@ -268,6 +280,9 @@ def run_record(request, record_id):
             reports_path = report.app + '.settings'
             report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
 
+            if not can_edit_setting_key(request.user, report_class.key):
+                return _settings_forbidden()
+
             form = report_class(request, request.POST)
             if form.is_valid():
                 return form.run_record()
@@ -314,9 +329,13 @@ def update_setting(request):
     if not title:
         return JsonResponse({'status': 'error', 'message': 'Title is required'}, status=400)
 
-    record.title = title
-    record.description = description
-    record.save()
+    # Titles and descriptions are shared by every campus.
+    if (title, description) != (record.title, record.description):
+        if not can_edit_setting_descriptions(request.user):
+            return _settings_forbidden()
+        record.title = title
+        record.description = description
+        record.save()
 
     if setting_value:
         try:
@@ -324,7 +343,10 @@ def update_setting(request):
             report_name = record.name
             reports_path = record.app + '.settings'
             report_class = import_string(f'{reports_path}.{report_name}.{report_name}')
-            setting_obj, created = Setting.objects.get_or_create(key=report_class.key)
+            if not can_edit_setting_key(request.user, report_class.key):
+                return _settings_forbidden()
+            setting_obj, created = Setting.objects.get_or_create(
+                key=report_class.key, defaults={'value': parsed})
             setting_obj.value = parsed
             setting_obj.save()
         except json.JSONDecodeError:

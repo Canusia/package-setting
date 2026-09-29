@@ -98,3 +98,53 @@ class AddSettingInstallTests(TestCase):
         setting = Setting.objects.get(key=SETTING_KEY)
         self.assertEqual(setting.value['types'], ['Tenant Custom Type'])
         self.assertEqual(setting.value['statuses'], ['Approved'])
+
+
+class MultiCampusUpdateSettingTests(TestCase):
+    """cis #30 (MC-06): in multi-campus mode a campus's settings admin may
+    change only that campus's settings; shared keys and the shared
+    title/description are superuser-only. Single-campus is unchanged."""
+
+    def setUp(self):
+        from django.conf import settings as dj_settings
+        from cis.models.course import Campus
+        from .models.setting import SettingRecord
+        self.campus = Campus.objects.create(
+            name=f'C1-{_sfx()}', code=f'{dj_settings.CAMPUS_CODE_PREFIX}-{_sfx()}')
+        self.user = User.objects.create_user(
+            username=f'ce_{_sfx()}', email=f'ce_{_sfx()}@x.com', password='x')
+        self.user.groups.add(Group.objects.get_or_create(name='ce')[0])
+        self.user.campus = {'process_campus': [str(self.campus.id)],
+                            'manage_settings': 'Yes'}
+        self.user.save()
+        self.record = SettingRecord.objects.create(
+            app=SETTING_APP, name=SETTING_NAME, title='Support Docs',
+            description='d')
+        Setting.objects.filter(key=SETTING_KEY).delete()
+
+    def _post(self, **data):
+        from django.test import RequestFactory
+        from cis.campus_context import campus_context
+        from .views.views import update_setting
+        request = RequestFactory().post('/', {
+            'record_id': str(self.record.id), 'title': 'Support Docs',
+            'description': 'd', **data})
+        request.user = self.user
+        with campus_context(self.campus):
+            return update_setting(request)
+
+    def test_single_campus_staff_edit_as_before(self):
+        response = self._post(title='Renamed', setting_value='{"types": []}')
+        self.assertEqual(response.status_code, 200)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.title, 'Renamed')
+
+    def test_multi_campus_staff_cannot_change_shared_key_or_title(self):
+        from django.test import override_settings
+        with override_settings(MULTI_CAMPUS=True):
+            self.assertEqual(self._post(title='Renamed').status_code, 403)
+            self.assertEqual(
+                self._post(setting_value='{"types": []}').status_code, 403)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.title, 'Support Docs')
+        self.assertFalse(Setting.objects.filter(key=SETTING_KEY).exists())
