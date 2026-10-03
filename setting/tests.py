@@ -148,3 +148,259 @@ class MultiCampusUpdateSettingTests(TestCase):
         self.record.refresh_from_db()
         self.assertEqual(self.record.title, 'Support Docs')
         self.assertFalse(Setting.objects.filter(key=SETTING_KEY).exists())
+
+
+# --- Settings API (package-setting#4) ---------------------------------------
+
+import importlib.util
+
+from django.test import override_settings
+from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
+
+_CV_APP = ('class_visit.class_visit' if importlib.util.find_spec('class_visit.class_visit')
+           else 'class_visit')
+try:
+    _CV_CLASS = __import__(f'{_CV_APP}.settings.class_visit',
+                           fromlist=['class_visit']).class_visit
+except Exception:  # pragma: no cover - tenant without class_visit
+    _CV_CLASS = None
+
+CV_KEY = 'class_visit'
+BAD_SELECT = '[{"name": "q1", "label": "Q1", "type": "select"}]'
+
+
+class SettingsAPITests(TestCase):
+    """Token API over the configurators: reads, validated writes, dry runs,
+    If-Match, history attribution and permissions."""
+
+    def setUp(self):
+        from .models.setting import SettingRecord
+        self.admin = User.objects.create_user(
+            username=f'su_{_sfx()}', email=f'su_{_sfx()}@x.com', password='x',
+            is_superuser=True)
+        self.nobody = User.objects.create_user(
+            username=f'no_{_sfx()}', email=f'no_{_sfx()}@x.com', password='x')
+
+        self.docs_record = SettingRecord.objects.create(
+            app=SETTING_APP, name=SETTING_NAME, title='Support Docs',
+            description='d', categories='1')
+        Setting.objects.filter(key=SETTING_KEY).delete()
+        Setting.objects.create(key=SETTING_KEY, value={
+            'types': ['Transcript'], 'statuses': ['Pending', 'Approved'],
+            'email_enabled': 'No', 'status_change_email_subject': 's',
+            'status_change_email': 'b', 'satisfying_statuses': [],
+            'document_check_registration_statuses': ['applied'],
+        })
+
+        if _CV_CLASS is not None:
+            self.cv_record = SettingRecord.objects.create(
+                app=_CV_APP, name='class_visit', title='Class Visit',
+                description='d', categories='3')
+            Setting.objects.filter(key=CV_KEY).delete()
+            _CV_CLASS().install()
+
+        self.api = self._client(self.admin)
+
+    def _client(self, user=None):
+        client = APIClient(REMOTE_ADDR='127.0.0.1')
+        if user is not None:
+            token, _ = Token.objects.get_or_create(user=user)
+            client.credentials(HTTP_AUTHORIZATION=f'Token {token.key}')
+        return client
+
+    @staticmethod
+    def _url(ref, suffix=''):
+        return f'/api/v1/settings/{ref}/{suffix}'
+
+    def _need_cv(self):
+        if _CV_CLASS is None:
+            self.skipTest('class_visit is not installed')
+
+    def _cv_value(self):
+        return Setting.objects.get(key=CV_KEY).value
+
+    # -- read ---------------------------------------------------------------
+    def test_superuser_token_reads_value_as_json(self):
+        self._need_cv()
+        response = self.api.get(self._url(CV_KEY))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['value'], self._cv_value())
+        self.assertEqual(response.json()['record_id'], str(self.cv_record.id))
+        self.assertTrue(response.json()['version'])
+        self.assertEqual(response['ETag'], f'"{response.json()["version"]}"')
+
+    def test_lookup_by_key_name_and_record_id_agree(self):
+        by_key = self.api.get(self._url(SETTING_KEY)).json()
+        by_name = self.api.get(self._url(SETTING_NAME)).json()
+        by_id = self.api.get(self._url(self.docs_record.id)).json()
+        self.assertEqual(by_key, by_name)
+        self.assertEqual(by_key, by_id)
+
+    def test_unknown_ref_is_404(self):
+        self.assertEqual(self.api.get(self._url('no_such_setting')).status_code, 404)
+
+    def test_list_filters_by_category_and_app(self):
+        rows = self.api.get('/api/v1/settings/', {'app': SETTING_APP}).json()
+        row = next(r for r in rows if r['id'] == str(self.docs_record.id))
+        self.assertEqual(row['key'], SETTING_KEY)
+        self.assertTrue(row['has_value'])
+        self.assertTrue(all(r['app'] == SETTING_APP for r in rows))
+
+        rows = self.api.get('/api/v1/settings/', {'category': '1'}).json()
+        self.assertIn(str(self.docs_record.id), [r['id'] for r in rows])
+        if _CV_CLASS is not None:
+            self.assertNotIn(str(self.cv_record.id), [r['id'] for r in rows])
+
+    def test_schema_lists_form_fields(self):
+        fields = {f['name']: f for f in
+                  self.api.get(self._url(SETTING_KEY, 'schema/')).json()['fields']}
+        self.assertEqual(fields['email_enabled']['type'], 'ChoiceField')
+        self.assertIn(['Yes', 'Yes'], fields['email_enabled']['choices'])
+        self.assertTrue(fields['document_check_registration_statuses']['multiple'])
+
+    # -- write (custom validation: class_visit) --------------------------------
+    def test_put_valid_value_saves(self):
+        self._need_cv()
+        value = self.api.get(self._url(CV_KEY)).json()['value']
+        value['visit_types'] = 'Initial|Annual'
+        response = self.api.put(self._url(CV_KEY), {'value': value}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(self._cv_value()['visit_types'], 'Initial|Annual')
+
+    def test_put_invalid_report_fields_is_400_and_stores_nothing(self):
+        self._need_cv()
+        before = self._cv_value()
+        value = dict(before, report_fields_json=BAD_SELECT)
+        response = self.api.put(self._url(CV_KEY), {'value': value}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('non-empty "options" list',
+                      ' '.join(response.json()['errors']['report_fields_json']))
+        self.assertEqual(self._cv_value(), before)
+
+    def test_patch_changes_only_the_given_key(self):
+        self._need_cv()
+        before = self._cv_value()
+        response = self.api.patch(
+            self._url(CV_KEY), {'value': {'is_active': 'Debug'}}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        after = self._cv_value()
+        self.assertEqual(after['is_active'], 'Debug')
+        changed = {k for k in after if after[k] != before.get(k)}
+        self.assertEqual(changed, {'is_active'})
+
+    def test_dry_run_never_saves_or_records_history(self):
+        self._need_cv()
+        setting = Setting.objects.get(key=CV_KEY)
+        before, history = setting.value, setting.history.count()
+        response = self.api.patch(
+            self._url(CV_KEY) + '?dry_run=1',
+            {'value': {'is_active': 'Debug'}}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['dry_run'])
+        self.assertEqual(response.json()['value']['is_active'], 'Debug')
+        setting.refresh_from_db()
+        self.assertEqual(setting.value, before)
+        self.assertEqual(setting.history.count(), history)
+
+        bad = self.api.patch(
+            self._url(CV_KEY) + '?dry_run=1',
+            {'value': {'report_fields_json': BAD_SELECT}}, format='json')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_stale_if_match_is_refused(self):
+        self._need_cv()
+        version = self.api.get(self._url(CV_KEY)).json()['version']
+        first = self.api.patch(self._url(CV_KEY), {'value': {'is_active': 'Yes'}},
+                               format='json', HTTP_IF_MATCH=f'"{version}"')
+        self.assertEqual(first.status_code, 200, first.content)
+        stale = self.api.patch(self._url(CV_KEY), {'value': {'is_active': 'No'}},
+                               format='json', HTTP_IF_MATCH=f'"{version}"')
+        self.assertEqual(stale.status_code, 412)
+        self.assertEqual(self._cv_value()['is_active'], 'Yes')
+
+    def test_write_is_in_change_log_with_api_user(self):
+        self._need_cv()
+        setting = Setting.objects.get(key=CV_KEY)
+        count = setting.history.count()
+        self.api.patch(self._url(CV_KEY), {'value': {'is_active': 'Debug'}},
+                       format='json')
+        self.assertEqual(setting.history.count(), count + 1)
+        latest = setting.history.order_by('-history_id').first()
+        self.assertEqual(latest.history_user, self.admin)
+        self.assertEqual(latest.value['is_active'], 'Debug')
+
+        entries = self.api.get(self._url(CV_KEY, 'history/')).json()
+        self.assertEqual(entries[0]['user'], str(self.admin))
+        self.assertEqual(entries[0]['value']['is_active'], 'Debug')
+
+    # -- write (generic path: stored shape differs from form shape) -----------
+    def test_generic_configurator_round_trips(self):
+        value = self.api.get(self._url(SETTING_KEY)).json()['value']
+        value['statuses'] = ['Pending', 'Approved', 'Rejected']
+        response = self.api.put(self._url(SETTING_KEY), {'value': value}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        stored = Setting.objects.get(key=SETTING_KEY).value
+        self.assertEqual(stored['statuses'], ['Pending', 'Approved', 'Rejected'])
+        self.assertEqual(stored['document_check_registration_statuses'], ['applied'])
+
+    def test_generic_configurator_rejects_bad_choice(self):
+        response = self.api.patch(
+            self._url(SETTING_KEY), {'value': {'email_enabled': 'Maybe'}}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('email_enabled', response.json()['errors'])
+        self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
+
+    def test_unknown_keys_rejected_unless_allowed(self):
+        response = self.api.patch(
+            self._url(SETTING_KEY), {'value': {'bogus': 1}}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('bogus', response.json()['errors']['__unknown__'][0])
+        self.assertNotIn('bogus', Setting.objects.get(key=SETTING_KEY).value)
+
+        response = self.api.patch(
+            self._url(SETTING_KEY) + '?allow_unknown=1',
+            {'value': {'bogus': 1}}, format='json')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['bogus'], 1)
+
+    def test_malformed_body_is_400(self):
+        response = self.api.put(self._url(SETTING_KEY), {'types': []}, format='json')
+        self.assertEqual(response.status_code, 400)
+
+    # -- permissions -----------------------------------------------------------
+    def test_no_token_is_401(self):
+        response = self._client().get(self._url(SETTING_KEY))
+        self.assertEqual(response.status_code, 401)
+
+    def test_token_without_rights_is_403(self):
+        client = self._client(self.nobody)
+        self.assertEqual(client.get(self._url(SETTING_KEY)).status_code, 403)
+        response = client.patch(
+            self._url(SETTING_KEY), {'value': {'email_enabled': 'Yes'}}, format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
+
+    def test_multi_campus_staff_cannot_write_shared_key(self):
+        from django.conf import settings as dj_settings
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from cis.campus_context import campus_context
+        from cis.models.course import Campus
+        from .views.api import SettingDetailAPI
+
+        campus = Campus.objects.create(
+            name=f'C1-{_sfx()}', code=f'{dj_settings.CAMPUS_CODE_PREFIX}-{_sfx()}')
+        staff = User.objects.create_user(
+            username=f'ce_{_sfx()}', email=f'ce_{_sfx()}@x.com', password='x')
+        staff.groups.add(Group.objects.get_or_create(name='ce')[0])
+        staff.campus = {'manage_settings': 'Yes'}
+        staff.save()
+        staff.set_process_campuses([str(campus.id)])
+
+        request = APIRequestFactory().patch(
+            '/', {'value': {'email_enabled': 'Yes'}}, format='json')
+        force_authenticate(request, user=staff)
+        with override_settings(MULTI_CAMPUS=True), campus_context(campus):
+            response = SettingDetailAPI.as_view()(request, ref=SETTING_KEY)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
