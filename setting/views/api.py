@@ -43,6 +43,34 @@ def _report_class(record):
     return import_string(f'{record.app}.settings.{record.name}.{record.name}')
 
 
+def configurator_id(report_class):
+    """A configurator's stable identifier (#5): '<package>:<class name>'.
+
+    Taken from the class, so it is the same on a pip install
+    (`drop_wd.settings.drop_wd_email`) and a dev submodule
+    (`drop_wd.drop_wd.settings.drop_wd_email`), and does not move with a tenant
+    prefix in `key` (package-grades) or with edits to a record's title.
+    """
+    module = report_class.__module__
+    if '.settings.' in module:
+        root = module.rsplit('.settings.', 1)[0]
+    else:
+        root = module.rsplit('.', 1)[0]
+    parts = []
+    for part in root.split('.'):
+        if not parts or parts[-1] != part:  # collapse the nested-submodule repeat
+            parts.append(part)
+    return f"{'.'.join(parts)}:{report_class.__name__}"
+
+
+def _configurator_of(record):
+    """The record's configurator identifier, or None when its class won't import."""
+    try:
+        return configurator_id(_report_class(record))
+    except Exception:
+        return None
+
+
 def _key_of(record):
     """The configurator's Setting key, or None when its class won't import."""
     try:
@@ -52,8 +80,9 @@ def _key_of(record):
 
 
 def resolve_record(ref):
-    """The SettingRecord named by a record UUID, a configurator key, or a
-    record name that is unique. Returns (record, report_class)."""
+    """The SettingRecord named by a record UUID, a configurator identifier
+    ('drop_wd:drop_wd_email', #5), a configurator key, or a record name that is
+    unique. Returns (record, report_class)."""
     try:
         record = SettingRecord.objects.filter(pk=uuid.UUID(str(ref))).first()
     except ValueError:
@@ -61,9 +90,11 @@ def resolve_record(ref):
 
     if record is None:
         records = list(SettingRecord.objects.all())
+        by_configurator = (
+            [r for r in records if _configurator_of(r) == ref] if ':' in str(ref) else [])
         by_key = [r for r in records if _key_of(r) == ref]
         by_name = [r for r in records if r.name == ref]
-        matches = by_key or by_name
+        matches = by_configurator or by_key or by_name
         if len(matches) > 1:
             raise ParseError(
                 f'"{ref}" matches more than one setting; use its key or '
@@ -94,6 +125,7 @@ def _detail(record, report_class):
     latest = _latest_history(setting)
     return {
         'key': report_class.key,
+        'configurator': configurator_id(report_class),
         'record_id': str(record.id),
         'name': record.name,
         'app': record.app,
@@ -170,12 +202,18 @@ class SettingListAPI(SettingsAPIView):
         if app:
             records = records.filter(app=app)
 
+        records = list(records)
+        configurators = {r.id: _configurator_of(r) for r in records}
+        configurator = request.query_params.get('configurator')
+        if configurator:
+            records = [r for r in records if configurators[r.id] == configurator]
         keys = {r.id: _key_of(r) for r in records}
         stored = set(Setting.objects.filter(
             key__in=[k for k in keys.values() if k]).values_list('key', flat=True))
         return Response([{
             'id': str(r.id),
             'key': keys[r.id],
+            'configurator': configurators[r.id],
             'name': r.name,
             'app': r.app,
             'title': r.title,
@@ -327,7 +365,9 @@ class SettingSchemaAPI(SettingsAPIView):
                 'help_text': force_str(field.help_text) if field.help_text else '',
                 'initial': _jsonable(form[name].value()),
             })
-        return Response({'key': report_class.key, 'record_id': str(record.id),
+        return Response({'key': report_class.key,
+                         'configurator': configurator_id(report_class),
+                         'record_id': str(record.id),
                          'fields': fields})
 
 

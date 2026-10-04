@@ -12,15 +12,26 @@ The package ships `setting.urls.api`. The host mounts it at `api/v1/settings/`.
 
 | Method & path | Does |
 |---|---|
-| `GET /` | Lists every `SettingRecord`: `id`, `key`, `name`, `app`, `title`, `description`, `categories`, `has_value`, `importable`. Filter with `?category=` and `?app=`. |
-| `GET /<ref>/` | Returns `{key, record_id, title, description, value, updated_at, version}`. Sends an `ETag` header equal to `version`. |
+| `GET /` | Lists every `SettingRecord`: `id`, `key`, `configurator`, `name`, `app`, `title`, `description`, `categories`, `has_value`, `importable`. Filter with `?category=`, `?app=` and `?configurator=`. |
+| `GET /<ref>/` | Returns `{key, configurator, record_id, title, description, value, updated_at, version}`. Sends an `ETag` header equal to `version`. |
 | `PUT /<ref>/` | Replaces the value with the body `{"value": {...}}`. |
 | `PATCH /<ref>/` | Merges the given keys into the stored value, then validates the result. |
 | `GET /<ref>/schema/` | Lists the configurator's form fields: name, label, type, widget, required, disabled, choices, help_text, initial. |
 | `GET /<ref>/history/` | Returns the change log: `id`, `date`, `user`, `action`, `value`, newest first. |
 
-`<ref>` can be a record UUID, a configurator `key` (`class_visit`, `cis.settings.support_docs`)
-or a record `name` when that name is unique. An ambiguous name returns `400`.
+`<ref>` can be a record UUID, a **configurator identifier** (`drop_wd:drop_wd_email`,
+`grades:class_section_grades`; #5), a configurator `key` (`class_visit`,
+`cis.settings.support_docs`) or a record `name` when that name is unique. An ambiguous
+reference returns `400`.
+
+**Configurator identifier (#5).** This is the stable handle for tools. It is
+`<package>:<configurator class>`, taken from the class's module with the trailing
+`.settings.<module>` dropped and the dev-submodule repeat collapsed. So `drop_wd.drop_wd` and
+`drop_wd` both give `drop_wd:drop_wd_email`. It does not depend on install layout, on a
+tenant prefix in `key` (package-grades), or on a record's title or name. It names the class's
+**home** package: a legacy record registered under `app='cis'` whose class lives in
+`future_sections` reports `future_sections:future_sections`. A record whose class won't import
+reports `null`.
 
 Write query parameters: `?dry_run=1` and `?allow_unknown=1`.
 

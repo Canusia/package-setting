@@ -26,9 +26,10 @@ Dynamic settings/configurator registry and management interface. Apps register c
 
 ### Settings API (`urls/api.py`, `views/api.py`; host mounts at `/api/v1/settings/`)
 Token or session auth; no credentials → 401, no settings rights → 403. `<ref>` is a record UUID,
-a configurator `key`, or a unique record `name`.
-- `GET /` — list records (`?category=`, `?app=`)
-- `GET /<ref>/` — `{key, record_id, title, description, value, updated_at, version}` + `ETag`
+a **configurator identifier** (`drop_wd:drop_wd_email`, #5), a configurator `key`, or a unique
+record `name`.
+- `GET /` — list records (`?category=`, `?app=`, `?configurator=`); each row has `configurator`
+- `GET /<ref>/` — `{key, configurator, record_id, title, description, value, updated_at, version}` + `ETag`
 - `PUT|PATCH /<ref>/` — body `{"value": {...}}`; PATCH merges. `?dry_run=1`, `?allow_unknown=1`, `If-Match: <version>` (412 when stale)
 - `GET /<ref>/schema/`, `GET /<ref>/history/`
 
@@ -37,6 +38,11 @@ form data, bind and validate the form, then save via `run_record()` — so the A
 what the UI enforces. Invalid → `400 {"errors": {...}}`, nothing stored. Views set
 `login_required = False` so cis's `LoginRequiredMiddleware` doesn't redirect token callers.
 Plan: `docs/plans/settings-api.md`.
+
+`configurator_id(report_class)` is the stable handle for external tools. It is derived from the
+**class** (module minus `.settings.<module>`, with the dev-submodule repeat collapsed, plus the
+class name), so it doesn't move with install layout, a tenant prefix in `key`, or title edits.
+Don't change the derivation: client_management keys workbook pushes off it.
 
 ## Commands
 

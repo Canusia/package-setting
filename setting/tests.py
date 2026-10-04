@@ -19,7 +19,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.contrib.auth.signals import user_logged_in
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from cis.models.settings import Setting
@@ -404,3 +404,96 @@ class SettingsAPITests(TestCase):
             response = SettingDetailAPI.as_view()(request, ref=SETTING_KEY)
         self.assertEqual(response.status_code, 403)
         self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
+
+    # -- #5: lookup and listing by configurator identifier --------------------
+    DOCS_ID = 'cis:support_docs'
+
+    def test_list_carries_and_filters_by_configurator(self):
+        rows = self.api.get('/api/v1/settings/', {'configurator': self.DOCS_ID}).json()
+        self.assertEqual([r['id'] for r in rows], [str(self.docs_record.id)])
+        self.assertEqual(rows[0]['configurator'], self.DOCS_ID)
+
+    def test_lookup_by_configurator_matches_lookup_by_key(self):
+        by_id = self.api.get(self._url(self.DOCS_ID))
+        self.assertEqual(by_id.status_code, 200, by_id.content)
+        self.assertEqual(by_id.json(), self.api.get(self._url(SETTING_KEY)).json())
+        self.assertEqual(by_id.json()['configurator'], self.DOCS_ID)
+        schema = self.api.get(self._url(self.DOCS_ID, 'schema/'))
+        self.assertEqual(schema.json()['configurator'], self.DOCS_ID)
+
+    def test_renaming_title_keeps_the_identifier(self):
+        self.docs_record.title = 'Something Else'
+        self.docs_record.save()
+        self.assertEqual(self.api.get(self._url(self.DOCS_ID)).json()['configurator'],
+                         self.DOCS_ID)
+
+    def test_write_by_configurator_honours_dry_run_and_if_match(self):
+        self._need_cv()
+        ref = 'class_visit:class_visit'
+        before = self._cv_value()
+        dry = self.api.patch(self._url(ref) + '?dry_run=1',
+                             {'value': {'is_active': 'Debug'}}, format='json')
+        self.assertEqual(dry.status_code, 200, dry.content)
+        self.assertEqual(self._cv_value(), before)
+
+        version = self.api.get(self._url(ref)).json()['version']
+        ok = self.api.patch(self._url(ref), {'value': {'is_active': 'Yes'}},
+                            format='json', HTTP_IF_MATCH=f'"{version}"')
+        self.assertEqual(ok.status_code, 200, ok.content)
+        stale = self.api.patch(self._url(ref), {'value': {'is_active': 'No'}},
+                               format='json', HTTP_IF_MATCH=f'"{version}"')
+        self.assertEqual(stale.status_code, 412)
+
+    def test_permissions_apply_to_configurator_lookup(self):
+        response = self._client(self.nobody).get(self._url(self.DOCS_ID))
+        self.assertEqual(response.status_code, 403)
+
+    def test_unimportable_record_lists_null_configurator(self):
+        from .models.setting import SettingRecord
+        SettingRecord.objects.create(app='no_such_app', name='gone', title='Gone',
+                                     description='d', categories='1')
+        rows = {r['name']: r for r in self.api.get('/api/v1/settings/').json()}
+        self.assertIsNone(rows['gone']['configurator'])
+
+    def test_ambiguous_configurator_is_400(self):
+        from .models.setting import SettingRecord
+        # Same configurator registered twice (different category, so the
+        # (name, categories) uniqueness constraint allows it).
+        SettingRecord.objects.create(app=SETTING_APP, name=SETTING_NAME, title='Dup',
+                                     description='d', categories='2')
+        self.assertEqual(self.api.get(self._url(self.DOCS_ID)).status_code, 400)
+
+
+# -- #5: stable configurator identifier ------------------------------------------
+
+def _fake_configurator(module, name):
+    return type(name, (), {'__module__': module, 'key': f'{module}.{name}'})
+
+
+class ConfiguratorIdTests(SimpleTestCase):
+    """configurator_id() depends only on the class, not on layout or key (#5)."""
+
+    def test_pip_and_dev_submodule_layouts_agree(self):
+        from .views.api import configurator_id
+        flat = _fake_configurator('drop_wd.settings.drop_wd_email', 'drop_wd_email')
+        nested = _fake_configurator('drop_wd.drop_wd.settings.drop_wd_email', 'drop_wd_email')
+        self.assertEqual(configurator_id(flat), 'drop_wd:drop_wd_email')
+        self.assertEqual(configurator_id(nested), 'drop_wd:drop_wd_email')
+
+    def test_tenant_prefixed_key_does_not_matter(self):
+        from .views.api import configurator_id
+        for prefix in ('EWU', 'LAMAR'):
+            cls = _fake_configurator('grades.grades.settings.class_section_grades',
+                                     'class_section_grades')
+            cls.key = f'{prefix}_class_grades'
+            self.assertEqual(configurator_id(cls), 'grades:class_section_grades')
+
+    def test_self_rooted_and_non_adjacent_repeats(self):
+        from .views.api import configurator_id
+        self.assertEqual(configurator_id(_fake_configurator('cis.settings.support_docs',
+                                                            'support_docs')), 'cis:support_docs')
+        self.assertEqual(configurator_id(_fake_configurator('a.b.a.settings.x', 'x')), 'a.b.a:x')
+
+    def test_module_without_settings_segment(self):
+        from .views.api import configurator_id
+        self.assertEqual(configurator_id(_fake_configurator('pkg.config', 'config')), 'pkg:config')
