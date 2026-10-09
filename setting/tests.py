@@ -589,3 +589,13 @@ class SearchTextTests(SimpleTestCase):
         plain = forms.CharField(label='Parent/Counselor Email')
         self.assertTrue(_is_heading(header, ''))
         self.assertFalse(_is_heading(plain, 'x'))
+
+    def test_credentials_are_not_indexed(self):
+        from django import forms
+        from .views.views import _is_secret
+        self.assertTrue(_is_secret('sftp_login', forms.CharField(widget=forms.PasswordInput)))
+        self.assertTrue(_is_secret('report_id', forms.CharField(widget=forms.HiddenInput)))
+        for name in ('password', 'private_key', 'client_secret', 'api_key', 'access_token'):
+            self.assertTrue(_is_secret(name, forms.CharField()), name)
+        for name in ('username', 'email_subject', 'bypass_review'):
+            self.assertFalse(_is_secret(name, forms.CharField()), name)

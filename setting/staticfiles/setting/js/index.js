@@ -90,7 +90,7 @@ function do_bulk_action(setting, field) {
     function normalize(value) {
         var s = String(value == null ? "" : value).toLowerCase();
         if (s.normalize) {
-            s = s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+            s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         }
         return s.replace(/[^a-z0-9]+/g, " ").trim();
     }
@@ -290,7 +290,7 @@ function do_bulk_action(setting, field) {
         if (at === -1) at = 0;
         var start = Math.max(0, at - 40);
         var end = Math.min(text.length, at + 100);
-        return (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+        return (start > 0 ? "\u2026" : "") + text.substring(start, end) + (end < text.length ? "\u2026" : "");
     }
 
     function pill(fieldHit) {
@@ -327,7 +327,7 @@ function do_bulk_action(setting, field) {
             if (search.failed) {
                 showMessage("<i class='fa fa-exclamation-triangle'></i> Search is unavailable right now. Reload the page to try again.");
             } else {
-                showMessage("<i class='fa fa-spinner fa-spin'></i> Loading settings…");
+                showMessage("<i class='fa fa-spinner fa-spin'></i> Loading settings\u2026");
                 loadIndex();
             }
             return;
@@ -336,7 +336,7 @@ function do_bulk_action(setting, field) {
 
         var tokens = queryTokens(query);
         if (!isSearchable(tokens)) {
-            showMessage("Keep typing to search…");
+            showMessage("Keep typing to search\u2026");
             return;
         }
         var groups = findMatches(query);
@@ -389,7 +389,7 @@ function do_bulk_action(setting, field) {
         }
 
         var count = groups.length === 1 ? "1 setting" : groups.length + " settings";
-        html.push("<div class='ss-footer'>" + count + " · ↑↓ to move · Enter to open · Esc to close</div>");
+        html.push("<div class='ss-footer'>" + count + " \u00b7 \u2191\u2193 to move \u00b7 Enter to open \u00b7 Esc to close</div>");
 
         search.rows = rows;
         $searchPanel.html(html.join(""));

@@ -4,7 +4,8 @@ import logging
 import re
 
 from django.conf import settings
-from django.db import IntegrityError
+from django import forms
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test, login_required
@@ -237,6 +238,17 @@ def record_details(request, report_id=None):
         }
     return JsonResponse(data)
 
+def _stringify(value):
+    """A scalar the way an HTML form would post it."""
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value)
+    return str(value)
+
+
 _SEARCH_VALUE_LIMIT = 2000
 
 
@@ -251,6 +263,16 @@ def _search_text(value, limit=None):
 
 
 _HEADING_TAG = re.compile(r'<h[1-6][\s>]', re.IGNORECASE)
+
+# Never index a stored credential: the search index is one JSON response that
+# lands in the browser, and its values are shown in the results dropdown.
+_SECRET_FIELD_NAME = re.compile(
+    r'password|passwd|passphrase|secret|private_?key|api_?key|token', re.IGNORECASE)
+
+
+def _is_secret(name, field):
+    return (isinstance(field.widget, (forms.PasswordInput, forms.HiddenInput))
+            or bool(_SECRET_FIELD_NAME.search(name)))
 
 
 def _is_heading(field, value):
@@ -269,8 +291,6 @@ def search_index(request):
     configurator form without rendering it."""
     if not _user_can_manage_settings(request.user):
         return _settings_forbidden()
-
-    from .api import _stringify
 
     category_labels = dict(SettingRecord.CATEGORIES)
     original_get = request.GET
@@ -299,14 +319,20 @@ def search_index(request):
             query['report_id'] = str(record.id)
             request.GET = query
 
-            form = report_class(request, initial=report_class.from_db())
+            # A savepoint per record, so one configurator's failed query can't
+            # abort the transaction for the rest under ATOMIC_REQUESTS.
+            with transaction.atomic():
+                form = report_class(request, initial=report_class.from_db())
             for name, field in form.fields.items():
                 try:
-                    value = form[name].value()
-                    if isinstance(value, (list, tuple)):
-                        value = ', '.join(_stringify(v) for v in value)
+                    if _is_secret(name, field):
+                        value = ''
                     else:
-                        value = _stringify(value)
+                        value = form[name].value()
+                        if isinstance(value, (list, tuple)):
+                            value = ', '.join(_stringify(v) for v in value)
+                        else:
+                            value = _stringify(value)
                 except Exception:
                     value = ''
                 entry['fields'].append({
@@ -319,7 +345,7 @@ def search_index(request):
         except Exception as e:
             logger.warning(
                 'Settings search could not index %s.%s: %s',
-                record.app, record.name, e)
+                record.app, record.name, e, exc_info=True)
         finally:
             request.GET = original_get
         results.append(entry)

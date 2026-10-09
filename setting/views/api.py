@@ -28,7 +28,7 @@ from rest_framework.views import APIView
 from cis.models.settings import Setting
 
 from ..models.setting import SettingRecord
-from .views import _user_can_manage_settings, can_edit_setting_key
+from .views import _stringify, _user_can_manage_settings, can_edit_setting_key
 
 logger = logging.getLogger(__name__)
 
@@ -135,17 +135,6 @@ def _detail(record, report_class):
         'updated_at': latest.history_date.isoformat() if latest else None,
         'version': str(latest.history_id) if latest else None,
     }
-
-
-def _stringify(value):
-    """A scalar the way an HTML form would post it."""
-    if value is None:
-        return ''
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, (dict, list, tuple)):
-        return json.dumps(value)
-    return str(value)
 
 
 def form_data(form):
