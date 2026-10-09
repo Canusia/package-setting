@@ -23,16 +23,22 @@
 <main>
     <div class="row">
         <div class="col-md-12 col-sm-12 mb-4">
-            <p class="alert alert-info">Click on a category to view available settings</p>
-            <div class="setting-search mb-3">
-                <label for="setting-quick-search" class="setting-search-label">Find a setting</label>
+            <div class="setting-search mb-4">
+                <label for="setting-quick-search" class="setting-search-title">
+                    <i class="fa fa-search" aria-hidden="true"></i>Search settings
+                </label>
+                <p class="setting-search-hint">
+                    Type a setting name, a field label, or a value you see on a form &mdash;
+                    or browse by category below.
+                </p>
                 <div class="setting-search-box">
                     <i class="fa fa-search setting-search-icon" aria-hidden="true"></i>
                     <input
                         type="text"
                         id="setting-quick-search"
                         class="setting-search-input"
-                        placeholder="Search titles, field names, help text, or values (e.g. Parent Notification, student_menu)"
+                        placeholder="e.g. parent email, registration charges, dropped"
+                        autofocus
                         autocomplete="off"
                         spellcheck="false"
                         role="combobox"
@@ -85,11 +91,18 @@
   field a result jumped to.
 {% endcomment %}
 <style>
-    .setting-search-label { display: block; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; margin-bottom: .35rem; }
+    /* The theme's --primary (SB Admin / Bootstrap 4) tints the panel, so each
+       client's colours carry through; the plain values are the fallback for
+       browsers without color-mix(). */
+    .setting-search { padding: 1.25rem 1.5rem 1.5rem; background: #f3f6fe; background: color-mix(in srgb, var(--primary, #4e73df) 7%, #fff); border: 1px solid #d5dffa; border-color: color-mix(in srgb, var(--primary, #4e73df) 25%, #fff); border-left: 4px solid var(--primary, #4e73df); border-radius: .75rem; }
+    .setting-search-title { display: block; margin: 0 0 .2rem; font-size: 1.3rem; font-weight: 700; color: #2e3a59; cursor: pointer; }
+    .setting-search-title .fa { color: var(--primary, #4e73df); margin-right: .5rem; }
+    .setting-search-hint { margin: 0 0 .9rem; font-size: .95rem; color: #5a5c69; }
     .setting-search-box { position: relative; }
-    .setting-search-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #9aa0a6; pointer-events: none; }
-    .setting-search-input { display: block; width: 100%; height: 3rem; padding: 0 5.5rem 0 2.75rem; font-size: 1rem; color: #212529; background: #fff; border: 1px solid #d6d9dd; border-radius: .6rem; box-shadow: 0 1px 2px rgba(16, 24, 40, .05); transition: border-color .15s, box-shadow .15s; }
-    .setting-search-input:focus { outline: 0; border-color: #4e73df; box-shadow: 0 0 0 .2rem rgba(78, 115, 223, .2); }
+    .setting-search-icon { position: absolute; left: 1.1rem; top: 50%; transform: translateY(-50%); font-size: 1.1rem; color: var(--primary, #4e73df); pointer-events: none; }
+    .setting-search-input { display: block; width: 100%; height: 3.5rem; padding: 0 5.5rem 0 3rem; font-size: 1.1rem; color: #212529; background: #fff; border: 2px solid #b9c7f3; border-color: color-mix(in srgb, var(--primary, #4e73df) 40%, #fff); border-radius: .6rem; box-shadow: 0 2px 6px rgba(16, 24, 40, .08); transition: border-color .15s, box-shadow .15s; }
+    .setting-search-input::placeholder { color: #8a8fa3; }
+    .setting-search-input:focus { outline: 0; border-color: var(--primary, #4e73df); box-shadow: 0 0 0 .25rem rgba(78, 115, 223, .25); box-shadow: 0 0 0 .25rem color-mix(in srgb, var(--primary, #4e73df) 25%, transparent); }
     .setting-search-clear { position: absolute; right: 2.6rem; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: #9aa0a6; padding: .25rem .4rem; line-height: 1; border-radius: .3rem; }
     .setting-search-clear:hover { color: #495057; background: #f1f3f5; }
     .setting-search-kbd { position: absolute; right: .9rem; top: 50%; transform: translateY(-50%); font-size: .75rem; padding: .1rem .4rem; color: #6c757d; background: #f1f3f5; border: 1px solid #dee2e6; border-radius: .25rem; box-shadow: none; }
