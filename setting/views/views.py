@@ -266,8 +266,11 @@ _HEADING_TAG = re.compile(r'<h[1-6][\s>]', re.IGNORECASE)
 
 # Never index a stored credential: the search index is one JSON response that
 # lands in the browser, and its values are shown in the results dropdown.
+# Matched against the end of the name only: 'sftp_password' is a credential,
+# 'post_password_reset_email' is an email template people need to search.
 _SECRET_FIELD_NAME = re.compile(
-    r'password|passwd|passphrase|secret|private_?key|api_?key|token', re.IGNORECASE)
+    r'(^|_)(password|passwd|passphrase|pwd|secret|token)$'
+    r'|(secret|private|api|access)_?key$', re.IGNORECASE)
 
 
 def _is_secret(name, field):
@@ -287,7 +290,8 @@ def _flat_choices(choices):
 def _display_value(field, value):
     """A field's current value as the user sees it: a select or checkbox list
     shows its choices' labels, not the stored values. Model choices look up
-    only the selected rows, never the whole queryset."""
+    only the selected rows, never the whole queryset, and a stored id with no
+    row (the select shows nothing) is left out rather than indexed as an id."""
     values = list(value) if isinstance(value, (list, tuple)) else [value]
     values = [v for v in values if v not in (None, '')]
     if not values:
@@ -308,7 +312,9 @@ def _display_value(field, value):
                     for obj in field.queryset.filter(**{f'{key}__in': lookups}):
                         labels[str(getattr(obj, key))] = field.label_from_instance(obj)
             except Exception:
-                pass  # a stale or malformed stored value: index it as stored
+                pass  # a malformed stored id: nothing the user would see
+        return ', '.join(
+            force_str(labels[str(v)]) for v in values if str(v) in labels)
     else:
         choices = getattr(field, 'choices', None) or getattr(field.widget, 'choices', None)
         if choices:

@@ -595,9 +595,14 @@ class SearchTextTests(SimpleTestCase):
         from .views.views import _is_secret
         self.assertTrue(_is_secret('sftp_login', forms.CharField(widget=forms.PasswordInput)))
         self.assertTrue(_is_secret('report_id', forms.CharField(widget=forms.HiddenInput)))
-        for name in ('password', 'private_key', 'client_secret', 'api_key', 'access_token'):
+        for name in ('password', 'sftp_password', 'private_key', 'client_secret',
+                     'api_key', 'apikey', 'access_token', 'secret_key',
+                     'aws_secret_access_key'):
             self.assertTrue(_is_secret(name, forms.CharField()), name)
-        for name in ('username', 'email_subject', 'bypass_review'):
+        # Email templates and blurbs about passwords are content, not credentials.
+        for name in ('username', 'email_subject', 'bypass_review',
+                     'post_password_reset_email', 'manage_password_blurb',
+                     'token_expiry_days', 'sort_key'):
             self.assertFalse(_is_secret(name, forms.CharField()), name)
 
     def test_choice_values_are_indexed_as_their_labels(self):
@@ -632,4 +637,6 @@ class SearchDisplayValueModelTests(TestCase):
         self.assertEqual(_display_value(many, [str(a.pk), b.pk]), f'{a.name}, {b.name}')
         by_name = forms.ModelChoiceField(queryset=Group.objects.all(), to_field_name='name')
         self.assertEqual(_display_value(by_name, b.name), b.name)
-        self.assertEqual(_display_value(one, 'not-a-pk'), 'not-a-pk')
+        # A stored id with no row shows nothing in the select; index nothing.
+        self.assertEqual(_display_value(one, 'not-a-pk'), '')
+        self.assertEqual(_display_value(many, [a.pk, 987654321]), a.name)
