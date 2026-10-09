@@ -1,14 +1,19 @@
+import html
 import json
 import logging
+import re
 
 from django.conf import settings
-from django.db import IntegrityError
-from django.db.models import Q
+from django import forms
+from django.db import IntegrityError, transaction
+from django.db.models import Model, Q
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test, login_required
 from django.utils.module_loading import import_string
 from django.http import Http404, JsonResponse
 
+from django.utils.encoding import force_str
+from django.utils.html import strip_tags
 from django.utils.safestring import mark_safe
 
 from django.template.context_processors import csrf
@@ -232,6 +237,166 @@ def record_details(request, report_id=None):
             'message': 'Unable to get report details ' + str(e)
         }
     return JsonResponse(data)
+
+def _stringify(value):
+    """A scalar the way an HTML form would post it."""
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value)
+    return str(value)
+
+
+_SEARCH_VALUE_LIMIT = 2000
+
+
+def _search_text(value, limit=None):
+    """Plain, single-spaced text for the search index: tags stripped and
+    entities decoded, so a label like '<h3>Parent Notification(s)</h3>' is
+    indexed as the words a user sees."""
+    text = ' '.join(html.unescape(strip_tags(force_str(value or ''))).split())
+    if limit and len(text) > limit:
+        text = text[:limit]
+    return text
+
+
+_HEADING_TAG = re.compile(r'<h[1-6][\s>]', re.IGNORECASE)
+
+# Never index a stored credential: the search index is one JSON response that
+# lands in the browser, and its values are shown in the results dropdown.
+# Matched against the end of the name only: 'sftp_password' is a credential,
+# 'post_password_reset_email' is an email template people need to search.
+_SECRET_FIELD_NAME = re.compile(
+    r'(^|_)(password|passwd|passphrase|pwd|secret|token)$'
+    r'|(secret|private|api|access)_?key$', re.IGNORECASE)
+
+
+def _is_secret(name, field):
+    return (isinstance(field.widget, (forms.PasswordInput, forms.HiddenInput))
+            or bool(_SECRET_FIELD_NAME.search(name)))
+
+
+def _flat_choices(choices):
+    """(value, label) pairs from a choices list, with optgroups flattened."""
+    for value, label in choices:
+        if isinstance(label, (list, tuple)):
+            yield from _flat_choices(label)
+        else:
+            yield value, label
+
+
+def _display_value(field, value):
+    """A field's current value as the user sees it: a select or checkbox list
+    shows its choices' labels, not the stored values. Model choices look up
+    only the selected rows, never the whole queryset. A stored value that is no
+    longer a choice shows nothing in the select, so it is left out."""
+    values = list(value) if isinstance(value, (list, tuple)) else [value]
+    values = [v for v in values if v not in (None, '')]
+    if not values:
+        return ''
+
+    labels = {}
+    if isinstance(field, forms.ModelChoiceField):
+        key = field.to_field_name or 'pk'
+        lookups = []
+        for v in values:
+            if isinstance(v, Model):
+                labels[str(v)] = field.label_from_instance(v)
+            else:
+                lookups.append(v)
+        if lookups:
+            try:
+                with transaction.atomic():
+                    for obj in field.queryset.filter(**{f'{key}__in': lookups}):
+                        labels[str(getattr(obj, key))] = field.label_from_instance(obj)
+            except Exception:
+                pass  # a malformed stored id: nothing the user would see
+    else:
+        choices = getattr(field, 'choices', None) or getattr(field.widget, 'choices', None)
+        if not choices:
+            return ', '.join(_stringify(v) for v in values)
+        labels = {str(k): v for k, v in _flat_choices(choices)}
+
+    # str() for most keys; _stringify() for a NullBooleanSelect's 'true'/'false'.
+    shown = (labels.get(str(v), labels.get(_stringify(v))) for v in values)
+    return ', '.join(force_str(label) for label in shown if label is not None)
+
+
+def _is_heading(field, value):
+    """True for label-only section headers, e.g. a ReadOnlyField whose label is
+    '<h3>Parent Notification(s)</h3>' and which renders no input."""
+    if field.label and _HEADING_TAG.search(force_str(field.label)):
+        return True
+    return type(field.widget).__name__ == 'LongLabelWidget' and not value
+
+
+@login_required(login_url='/')
+def search_index(request):
+    """Everything the settings quick search matches against, in one response:
+    each record's title, description, categories and key, plus every form
+    field's label, help text and current value. Fields are read from the
+    configurator form without rendering it."""
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
+
+    category_labels = dict(SettingRecord.CATEGORIES)
+    original_get = request.GET
+    results = []
+
+    for record in SettingRecord.objects.all().order_by('title'):
+        entry = {
+            'id': str(record.id),
+            'title': record.title,
+            'description': _search_text(record.description),
+            'name': record.name,
+            'key': '',
+            'categories': [
+                {'key': str(c), 'label': category_labels.get(str(c), str(c))}
+                for c in (record.categories or [])],
+            'fields': [],
+        }
+        try:
+            report_class = import_string(
+                f'{record.app}.settings.{record.name}.{record.name}')
+            entry['key'] = force_str(getattr(report_class, 'key', '') or '')
+
+            # Configurators build their form action from report_id, as they
+            # would when record_details renders them.
+            query = original_get.copy()
+            query['report_id'] = str(record.id)
+            request.GET = query
+
+            # A savepoint per record, so one configurator's failed query can't
+            # abort the transaction for the rest under ATOMIC_REQUESTS.
+            with transaction.atomic():
+                form = report_class(request, initial=report_class.from_db())
+            for name, field in form.fields.items():
+                try:
+                    if _is_secret(name, field):
+                        value = ''
+                    else:
+                        value = _display_value(field, form[name].value())
+                except Exception:
+                    value = ''
+                entry['fields'].append({
+                    'name': name,
+                    'label': _search_text(field.label) if field.label else '',
+                    'help_text': _search_text(field.help_text),
+                    'value': _search_text(value, _SEARCH_VALUE_LIMIT),
+                    'heading': _is_heading(field, value),
+                })
+        except Exception as e:
+            logger.warning(
+                'Settings search could not index %s.%s: %s',
+                record.app, record.name, e, exc_info=True)
+        finally:
+            request.GET = original_get
+        results.append(entry)
+
+    return JsonResponse({'records': results})
+
 
 def show_preview(request):
     if not _user_can_manage_settings(request.user):

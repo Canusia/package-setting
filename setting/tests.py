@@ -497,3 +497,148 @@ class ConfiguratorIdTests(SimpleTestCase):
     def test_module_without_settings_segment(self):
         from .views.api import configurator_id
         self.assertEqual(configurator_id(_fake_configurator('pkg.config', 'config')), 'pkg:config')
+
+
+# -- Quick search index ------------------------------------------------------------
+
+class SearchIndexTests(TestCase):
+    """search_index/ feeds the settings quick search: every record with its
+    fields' plain-text labels, help text and values, CE-only, and tolerant of
+    a configurator that won't load."""
+
+    @classmethod
+    def setUpClass(cls):
+        if _login_history_post_login is not None:
+            user_logged_in.disconnect(_login_history_post_login)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        if _login_history_post_login is not None:
+            user_logged_in.connect(_login_history_post_login)
+
+    def setUp(self):
+        from .models.setting import SettingRecord
+        self.ce_user = User.objects.create_user(
+            username=f'ce_{_sfx()}', email=f'ce_{_sfx()}@x.com', password='x')
+        self.ce_user.groups.add(Group.objects.get_or_create(name='ce')[0])
+        self.ce_user.save()
+        self.nobody = User.objects.create_user(
+            username=f'no_{_sfx()}', email=f'no_{_sfx()}@x.com', password='x')
+
+        self.record = SettingRecord.objects.create(
+            app=SETTING_APP, name=SETTING_NAME, title='Support Docs',
+            description='<b>Support</b> document types', categories='1')
+        Setting.objects.filter(key=SETTING_KEY).delete()
+        Setting.objects.create(key=SETTING_KEY, value={
+            'types': ['Transcript'], 'statuses': ['Pending', 'Approved']})
+
+        self.client = self.client_class(REMOTE_ADDR='127.0.0.1')
+
+    def _get(self, user):
+        self.client.force_login(user)
+        return self.client.get(reverse('setting:search_index'))
+
+    def test_requires_settings_rights(self):
+        self.assertEqual(self._get(self.nobody).status_code, 403)
+
+    def test_lists_record_with_its_fields(self):
+        response = self._get(self.ce_user)
+        self.assertEqual(response.status_code, 200)
+        rows = {r['id']: r for r in response.json()['records']}
+        row = rows[str(self.record.id)]
+        self.assertEqual(row['title'], 'Support Docs')
+        self.assertEqual(row['description'], 'Support document types')
+        self.assertEqual(row['key'], SETTING_KEY)
+        self.assertEqual(row['categories'], [{'key': '1', 'label': 'Students'}])
+        self.assertTrue(row['fields'])
+        for field in row['fields']:
+            self.assertEqual(set(field), {'name', 'label', 'help_text', 'value', 'heading'})
+            self.assertNotIn('<', field['label'])
+
+    def test_unloadable_configurator_keeps_its_title_searchable(self):
+        from .models.setting import SettingRecord
+        gone = SettingRecord.objects.create(
+            app='no_such_app', name='gone', title='Gone', description='d',
+            categories='1')
+        response = self._get(self.ce_user)
+        self.assertEqual(response.status_code, 200)
+        rows = {r['id']: r for r in response.json()['records']}
+        self.assertEqual(rows[str(gone.id)]['title'], 'Gone')
+        self.assertEqual(rows[str(gone.id)]['fields'], [])
+        self.assertTrue(rows[str(self.record.id)]['fields'])
+
+
+class SearchTextTests(SimpleTestCase):
+    """A section header's HTML label is indexed as the words a user sees."""
+
+    def test_html_label_becomes_plain_text(self):
+        from .views.views import _search_text
+        self.assertEqual(
+            _search_text('<h3 class="mt-4">Parent Notification(s)</h3>'),
+            'Parent Notification(s)')
+        self.assertEqual(_search_text('Tom &amp; Jerry\n\n  <i>x</i>'), 'Tom & Jerry x')
+        self.assertEqual(_search_text('abcdef', limit=3), 'abc')
+
+    def test_heading_label_is_flagged(self):
+        from django import forms
+        from django.utils.safestring import mark_safe
+        from .views.views import _is_heading
+        header = forms.CharField(label=mark_safe('<h3 class="mt-4">Parent Notification(s)</h3>'))
+        plain = forms.CharField(label='Parent/Counselor Email')
+        self.assertTrue(_is_heading(header, ''))
+        self.assertFalse(_is_heading(plain, 'x'))
+
+    def test_credentials_are_not_indexed(self):
+        from django import forms
+        from .views.views import _is_secret
+        self.assertTrue(_is_secret('sftp_login', forms.CharField(widget=forms.PasswordInput)))
+        self.assertTrue(_is_secret('report_id', forms.CharField(widget=forms.HiddenInput)))
+        for name in ('password', 'sftp_password', 'private_key', 'client_secret',
+                     'api_key', 'apikey', 'access_token', 'secret_key',
+                     'aws_secret_access_key'):
+            self.assertTrue(_is_secret(name, forms.CharField()), name)
+        # Email templates and blurbs about passwords are content, not credentials.
+        for name in ('username', 'email_subject', 'bypass_review',
+                     'post_password_reset_email', 'manage_password_blurb',
+                     'token_expiry_days', 'sort_key'):
+            self.assertFalse(_is_secret(name, forms.CharField()), name)
+
+    def test_choice_values_are_indexed_as_their_labels(self):
+        from django import forms
+        from .views.views import _display_value
+        status = forms.ChoiceField(choices=[('P', 'Pending'), ('A', 'Approved')])
+        self.assertEqual(_display_value(status, 'A'), 'Approved')
+        grouped = forms.ChoiceField(choices=[('Terms', [(17, 'Fall 2026'), (18, 'Spring 2027')])])
+        self.assertEqual(_display_value(grouped, '17'), 'Fall 2026')
+        many = forms.MultipleChoiceField(choices=[('P', 'Pending'), ('A', 'Approved')])
+        self.assertEqual(_display_value(many, ['P', 'A']), 'Pending, Approved')
+        # A select on a plain CharField, a value with no label, and no value.
+        select = forms.CharField(widget=forms.Select(choices=[('y', 'Yes'), ('n', 'No')]))
+        self.assertEqual(_display_value(select, 'n'), 'No')
+        self.assertEqual(_display_value(status, 'gone'), '')
+        self.assertEqual(_display_value(many, ['P', 'gone']), 'Pending')
+        self.assertEqual(_display_value(forms.NullBooleanField(), True), 'Yes')
+        self.assertEqual(_display_value(status, None), '')
+        self.assertEqual(_display_value(forms.CharField(), 'plain'), 'plain')
+
+
+class SearchDisplayValueModelTests(TestCase):
+    """A model select is indexed as the selected rows' labels."""
+
+    def test_model_choice_values_are_indexed_as_their_labels(self):
+        from django import forms
+        from .views.views import _display_value
+        a = Group.objects.create(name=f'Alpha {_sfx()}')
+        b = Group.objects.create(name=f'Beta {_sfx()}')
+        one = forms.ModelChoiceField(queryset=Group.objects.all())
+        self.assertEqual(_display_value(one, a.pk), a.name)
+        self.assertEqual(_display_value(one, a), a.name)
+        many = forms.ModelMultipleChoiceField(queryset=Group.objects.all())
+        self.assertEqual(_display_value(many, [str(a.pk), b.pk]), f'{a.name}, {b.name}')
+        by_name = forms.ModelChoiceField(queryset=Group.objects.all(), to_field_name='name')
+        self.assertEqual(_display_value(by_name, b.name), b.name)
+        # A stored id with no row shows nothing in the select; index nothing.
+        self.assertEqual(_display_value(one, 'not-a-pk'), '')
+        self.assertEqual(_display_value(many, [a.pk, 987654321]), a.name)

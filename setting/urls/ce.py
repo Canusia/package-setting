@@ -11,7 +11,8 @@ from ..views.views import (
     show_preview,
     add_new as add_new_setting,
     update_setting,
-    setting_history
+    setting_history,
+    search_index
 )
 
 app_name = 'setting'
@@ -26,4 +27,5 @@ urlpatterns = [
     path('add_new', add_new_setting, name='add_new'),
     path('update_setting/', update_setting, name='update_setting'),
     path('setting_history/', setting_history, name='setting_history'),
+    path('search_index/', search_index, name='search_index'),
 ]
