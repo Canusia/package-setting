@@ -1,5 +1,7 @@
+import html
 import json
 import logging
+import re
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -9,6 +11,8 @@ from django.contrib.auth.decorators import user_passes_test, login_required
 from django.utils.module_loading import import_string
 from django.http import Http404, JsonResponse
 
+from django.utils.encoding import force_str
+from django.utils.html import strip_tags
 from django.utils.safestring import mark_safe
 
 from django.template.context_processors import csrf
@@ -232,6 +236,96 @@ def record_details(request, report_id=None):
             'message': 'Unable to get report details ' + str(e)
         }
     return JsonResponse(data)
+
+_SEARCH_VALUE_LIMIT = 2000
+
+
+def _search_text(value, limit=None):
+    """Plain, single-spaced text for the search index: tags stripped and
+    entities decoded, so a label like '<h3>Parent Notification(s)</h3>' is
+    indexed as the words a user sees."""
+    text = ' '.join(html.unescape(strip_tags(force_str(value or ''))).split())
+    if limit and len(text) > limit:
+        text = text[:limit]
+    return text
+
+
+_HEADING_TAG = re.compile(r'<h[1-6][\s>]', re.IGNORECASE)
+
+
+def _is_heading(field, value):
+    """True for label-only section headers, e.g. a ReadOnlyField whose label is
+    '<h3>Parent Notification(s)</h3>' and which renders no input."""
+    if field.label and _HEADING_TAG.search(force_str(field.label)):
+        return True
+    return type(field.widget).__name__ == 'LongLabelWidget' and not value
+
+
+@login_required(login_url='/')
+def search_index(request):
+    """Everything the settings quick search matches against, in one response:
+    each record's title, description, categories and key, plus every form
+    field's label, help text and current value. Fields are read from the
+    configurator form without rendering it."""
+    if not _user_can_manage_settings(request.user):
+        return _settings_forbidden()
+
+    from .api import _stringify
+
+    category_labels = dict(SettingRecord.CATEGORIES)
+    original_get = request.GET
+    results = []
+
+    for record in SettingRecord.objects.all().order_by('title'):
+        entry = {
+            'id': str(record.id),
+            'title': record.title,
+            'description': _search_text(record.description),
+            'name': record.name,
+            'key': '',
+            'categories': [
+                {'key': str(c), 'label': category_labels.get(str(c), str(c))}
+                for c in (record.categories or [])],
+            'fields': [],
+        }
+        try:
+            report_class = import_string(
+                f'{record.app}.settings.{record.name}.{record.name}')
+            entry['key'] = force_str(getattr(report_class, 'key', '') or '')
+
+            # Configurators build their form action from report_id, as they
+            # would when record_details renders them.
+            query = original_get.copy()
+            query['report_id'] = str(record.id)
+            request.GET = query
+
+            form = report_class(request, initial=report_class.from_db())
+            for name, field in form.fields.items():
+                try:
+                    value = form[name].value()
+                    if isinstance(value, (list, tuple)):
+                        value = ', '.join(_stringify(v) for v in value)
+                    else:
+                        value = _stringify(value)
+                except Exception:
+                    value = ''
+                entry['fields'].append({
+                    'name': name,
+                    'label': _search_text(field.label) if field.label else '',
+                    'help_text': _search_text(field.help_text),
+                    'value': _search_text(value, _SEARCH_VALUE_LIMIT),
+                    'heading': _is_heading(field, value),
+                })
+        except Exception as e:
+            logger.warning(
+                'Settings search could not index %s.%s: %s',
+                record.app, record.name, e)
+        finally:
+            request.GET = original_get
+        results.append(entry)
+
+    return JsonResponse({'records': results})
+
 
 def show_preview(request):
     if not _user_can_manage_settings(request.user):

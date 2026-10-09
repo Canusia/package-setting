@@ -24,28 +24,26 @@
     <div class="row">
         <div class="col-md-12 col-sm-12 mb-4">
             <p class="alert alert-info">Click on a category to view available settings</p>
-            <div class="card mb-3">
-                <div class="card-body py-3">
-                    <label for="setting-quick-search" class="mb-2"><strong>Find a setting quickly</strong></label>
-                    <div class="position-relative">
-                        <div class="input-group">
-                            <input
-                                type="text"
-                                class="form-control"
-                                id="setting-quick-search"
-                                placeholder="Search by setting title, menu text, or JSON key (e.g. student_menu)"
-                                aria-label="Search settings">
-                            <div class="input-group-append">
-                                <button class="btn btn-primary" id="btn-setting-quick-search" type="button">
-                                    <i class="fa fa-search"></i> Search
-                                </button>
-                            </div>
-                        </div>
-                        <div id="setting-search-dropdown" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index: 1050; max-height: 360px; overflow-y: auto;"></div>
-                    </div>
-                    <small class="text-muted d-block mt-2">
-                        Search opens the matching category/setting and focuses the first matching field.
-                    </small>
+            <div class="setting-search mb-3">
+                <label for="setting-quick-search" class="setting-search-label">Find a setting</label>
+                <div class="setting-search-box">
+                    <i class="fa fa-search setting-search-icon" aria-hidden="true"></i>
+                    <input
+                        type="text"
+                        id="setting-quick-search"
+                        class="setting-search-input"
+                        placeholder="Search titles, field names, help text, or values (e.g. Parent Notification, student_menu)"
+                        autocomplete="off"
+                        spellcheck="false"
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-expanded="false"
+                        aria-controls="setting-search-dropdown">
+                    <button type="button" class="setting-search-clear d-none" id="setting-search-clear" aria-label="Clear search">
+                        <i class="fa fa-times" aria-hidden="true"></i>
+                    </button>
+                    <kbd class="setting-search-kbd" title="Press / to search">/</kbd>
+                    <div id="setting-search-dropdown" class="setting-search-panel d-none" role="listbox" aria-label="Search results"></div>
                 </div>
             </div>
             <div id="report-list-container" class="well well-sm bg-white pt-3 p-2">
@@ -79,7 +77,46 @@
      data-url-record-details="{% url 'setting:record_details' %}"
      data-url-show-preview="{% url 'setting:show_preview' %}"
      data-url-run-record="{% url 'setting:run_record' '00000000-0000-0000-0000-000000000000' %}"
+     data-url-search-index="{% url 'setting:search_index' %}"
      style="display:none;"></div>
+{% comment %}
+  Quick-search styles. Every selector starts with a setting-search class so
+  nothing leaks into the host's base template; .setting-search-flash marks the
+  field a result jumped to.
+{% endcomment %}
+<style>
+    .setting-search-label { display: block; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: #6c757d; margin-bottom: .35rem; }
+    .setting-search-box { position: relative; }
+    .setting-search-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #9aa0a6; pointer-events: none; }
+    .setting-search-input { display: block; width: 100%; height: 3rem; padding: 0 5.5rem 0 2.75rem; font-size: 1rem; color: #212529; background: #fff; border: 1px solid #d6d9dd; border-radius: .6rem; box-shadow: 0 1px 2px rgba(16, 24, 40, .05); transition: border-color .15s, box-shadow .15s; }
+    .setting-search-input:focus { outline: 0; border-color: #4e73df; box-shadow: 0 0 0 .2rem rgba(78, 115, 223, .2); }
+    .setting-search-clear { position: absolute; right: 2.6rem; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: #9aa0a6; padding: .25rem .4rem; line-height: 1; border-radius: .3rem; }
+    .setting-search-clear:hover { color: #495057; background: #f1f3f5; }
+    .setting-search-kbd { position: absolute; right: .9rem; top: 50%; transform: translateY(-50%); font-size: .75rem; padding: .1rem .4rem; color: #6c757d; background: #f1f3f5; border: 1px solid #dee2e6; border-radius: .25rem; box-shadow: none; }
+    .setting-search-panel { position: absolute; left: 0; right: 0; top: calc(100% + .35rem); z-index: 1050; max-height: 420px; overflow-y: auto; background: #fff; border: 1px solid #e3e6ea; border-radius: .6rem; box-shadow: 0 10px 30px rgba(16, 24, 40, .12); padding: .35rem 0; }
+    .setting-search-panel .ss-group + .ss-group { border-top: 1px solid #f1f3f5; margin-top: .25rem; padding-top: .25rem; }
+    .setting-search-panel .ss-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: .45rem 1rem; color: #212529; cursor: pointer; }
+    .setting-search-panel .ss-item.ss-active,
+    .setting-search-panel .ss-item:hover { background: #eef2fd; }
+    .setting-search-panel .ss-setting { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+    .setting-search-panel .ss-setting .fa { color: #4e73df; margin-right: .45rem; }
+    .setting-search-panel .ss-cats { font-weight: 400; font-size: .75rem; color: #6c757d; white-space: nowrap; margin-left: .75rem; }
+    .setting-search-panel .ss-field { padding-left: 2.35rem; }
+    .setting-search-panel .ss-field-line { display: flex; align-items: center; justify-content: space-between; }
+    .setting-search-panel .ss-field-label { font-size: .9rem; }
+    .setting-search-panel .ss-snippet { display: block; font-size: .8rem; color: #6c757d; margin-top: .1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .setting-search-panel .ss-pill { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: .1rem .45rem; border-radius: 1rem; background: #f1f3f5; color: #6c757d; margin-left: .75rem; white-space: nowrap; }
+    .setting-search-panel .ss-pill-section { background: #e7f1ff; color: #2f5fb3; }
+    .setting-search-panel .ss-pill-value { background: #fff4e5; color: #9a5b00; }
+    .setting-search-panel mark { padding: 0 .1em; background: #fff3a3; color: inherit; border-radius: .15em; }
+    .setting-search-panel .ss-message { padding: .75rem 1rem; color: #6c757d; font-size: .9rem; }
+    .setting-search-panel .ss-footer { padding: .4rem 1rem 0; margin-top: .25rem; border-top: 1px solid #f1f3f5; font-size: .75rem; color: #9aa0a6; }
+    .setting-search-flash { border-radius: .4rem; animation: setting-search-flash 1.6s ease-out; }
+    @keyframes setting-search-flash {
+        0%, 40% { box-shadow: 0 0 0 3px rgba(78, 115, 223, .55); background-color: rgba(78, 115, 223, .08); }
+        100% { box-shadow: 0 0 0 3px rgba(78, 115, 223, 0); background-color: transparent; }
+    }
+</style>
 <script src="{% static 'setting/js/index.js' %}"></script>
 <script src="{% static 'setting/js/setting.js' %}"></script>
 {% endblock %}

@@ -22,6 +22,7 @@ Dynamic settings/configurator registry and management interface. Apps register c
 - `run_record/<uuid>` - POST: Save setting values
 - `update_setting/` - POST: Update setting metadata (title, description) and JSON value (superuser only)
 - `setting_history/` - AJAX: Get change history for a setting (DataTables JSON)
+- `search_index/` - AJAX: Every record with its form fields' label, help text and current value (tags stripped), for the quick search. Forms are instantiated, not rendered; a configurator that fails to load is returned with `fields: []`
 - `add_new` - Register new configurator
 
 ### Settings API (`urls/api.py`, `views/api.py`; host mounts at `/api/v1/settings/`)
