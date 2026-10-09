@@ -6,7 +6,7 @@ import re
 from django.conf import settings
 from django import forms
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Model, Q
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test, login_required
 from django.utils.module_loading import import_string
@@ -275,6 +275,50 @@ def _is_secret(name, field):
             or bool(_SECRET_FIELD_NAME.search(name)))
 
 
+def _flat_choices(choices):
+    """(value, label) pairs from a choices list, with optgroups flattened."""
+    for value, label in choices:
+        if isinstance(label, (list, tuple)):
+            yield from _flat_choices(label)
+        else:
+            yield value, label
+
+
+def _display_value(field, value):
+    """A field's current value as the user sees it: a select or checkbox list
+    shows its choices' labels, not the stored values. Model choices look up
+    only the selected rows, never the whole queryset."""
+    values = list(value) if isinstance(value, (list, tuple)) else [value]
+    values = [v for v in values if v not in (None, '')]
+    if not values:
+        return ''
+
+    labels = {}
+    if isinstance(field, forms.ModelChoiceField):
+        key = field.to_field_name or 'pk'
+        lookups = []
+        for v in values:
+            if isinstance(v, Model):
+                labels[str(v)] = field.label_from_instance(v)
+            else:
+                lookups.append(v)
+        if lookups:
+            try:
+                with transaction.atomic():
+                    for obj in field.queryset.filter(**{f'{key}__in': lookups}):
+                        labels[str(getattr(obj, key))] = field.label_from_instance(obj)
+            except Exception:
+                pass  # a stale or malformed stored value: index it as stored
+    else:
+        choices = getattr(field, 'choices', None) or getattr(field.widget, 'choices', None)
+        if choices:
+            labels = {str(k): v for k, v in _flat_choices(choices)}
+
+    return ', '.join(
+        force_str(labels[str(v)]) if str(v) in labels else _stringify(v)
+        for v in values)
+
+
 def _is_heading(field, value):
     """True for label-only section headers, e.g. a ReadOnlyField whose label is
     '<h3>Parent Notification(s)</h3>' and which renders no input."""
@@ -328,11 +372,7 @@ def search_index(request):
                     if _is_secret(name, field):
                         value = ''
                     else:
-                        value = form[name].value()
-                        if isinstance(value, (list, tuple)):
-                            value = ', '.join(_stringify(v) for v in value)
-                        else:
-                            value = _stringify(value)
+                        value = _display_value(field, form[name].value())
                 except Exception:
                     value = ''
                 entry['fields'].append({

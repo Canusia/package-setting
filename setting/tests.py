@@ -599,3 +599,37 @@ class SearchTextTests(SimpleTestCase):
             self.assertTrue(_is_secret(name, forms.CharField()), name)
         for name in ('username', 'email_subject', 'bypass_review'):
             self.assertFalse(_is_secret(name, forms.CharField()), name)
+
+    def test_choice_values_are_indexed_as_their_labels(self):
+        from django import forms
+        from .views.views import _display_value
+        status = forms.ChoiceField(choices=[('P', 'Pending'), ('A', 'Approved')])
+        self.assertEqual(_display_value(status, 'A'), 'Approved')
+        grouped = forms.ChoiceField(choices=[('Terms', [(17, 'Fall 2026'), (18, 'Spring 2027')])])
+        self.assertEqual(_display_value(grouped, '17'), 'Fall 2026')
+        many = forms.MultipleChoiceField(choices=[('P', 'Pending'), ('A', 'Approved')])
+        self.assertEqual(_display_value(many, ['P', 'A']), 'Pending, Approved')
+        # A select on a plain CharField, a value with no label, and no value.
+        select = forms.CharField(widget=forms.Select(choices=[('y', 'Yes'), ('n', 'No')]))
+        self.assertEqual(_display_value(select, 'n'), 'No')
+        self.assertEqual(_display_value(status, 'gone'), 'gone')
+        self.assertEqual(_display_value(status, None), '')
+        self.assertEqual(_display_value(forms.CharField(), 'plain'), 'plain')
+
+
+class SearchDisplayValueModelTests(TestCase):
+    """A model select is indexed as the selected rows' labels."""
+
+    def test_model_choice_values_are_indexed_as_their_labels(self):
+        from django import forms
+        from .views.views import _display_value
+        a = Group.objects.create(name=f'Alpha {_sfx()}')
+        b = Group.objects.create(name=f'Beta {_sfx()}')
+        one = forms.ModelChoiceField(queryset=Group.objects.all())
+        self.assertEqual(_display_value(one, a.pk), a.name)
+        self.assertEqual(_display_value(one, a), a.name)
+        many = forms.ModelMultipleChoiceField(queryset=Group.objects.all())
+        self.assertEqual(_display_value(many, [str(a.pk), b.pk]), f'{a.name}, {b.name}')
+        by_name = forms.ModelChoiceField(queryset=Group.objects.all(), to_field_name='name')
+        self.assertEqual(_display_value(by_name, b.name), b.name)
+        self.assertEqual(_display_value(one, 'not-a-pk'), 'not-a-pk')
