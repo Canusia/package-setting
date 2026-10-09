@@ -617,7 +617,9 @@ class SearchTextTests(SimpleTestCase):
         # A select on a plain CharField, a value with no label, and no value.
         select = forms.CharField(widget=forms.Select(choices=[('y', 'Yes'), ('n', 'No')]))
         self.assertEqual(_display_value(select, 'n'), 'No')
-        self.assertEqual(_display_value(status, 'gone'), 'gone')
+        self.assertEqual(_display_value(status, 'gone'), '')
+        self.assertEqual(_display_value(many, ['P', 'gone']), 'Pending')
+        self.assertEqual(_display_value(forms.NullBooleanField(), True), 'Yes')
         self.assertEqual(_display_value(status, None), '')
         self.assertEqual(_display_value(forms.CharField(), 'plain'), 'plain')
 

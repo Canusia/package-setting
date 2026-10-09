@@ -290,8 +290,8 @@ def _flat_choices(choices):
 def _display_value(field, value):
     """A field's current value as the user sees it: a select or checkbox list
     shows its choices' labels, not the stored values. Model choices look up
-    only the selected rows, never the whole queryset, and a stored id with no
-    row (the select shows nothing) is left out rather than indexed as an id."""
+    only the selected rows, never the whole queryset. A stored value that is no
+    longer a choice shows nothing in the select, so it is left out."""
     values = list(value) if isinstance(value, (list, tuple)) else [value]
     values = [v for v in values if v not in (None, '')]
     if not values:
@@ -313,16 +313,15 @@ def _display_value(field, value):
                         labels[str(getattr(obj, key))] = field.label_from_instance(obj)
             except Exception:
                 pass  # a malformed stored id: nothing the user would see
-        return ', '.join(
-            force_str(labels[str(v)]) for v in values if str(v) in labels)
     else:
         choices = getattr(field, 'choices', None) or getattr(field.widget, 'choices', None)
-        if choices:
-            labels = {str(k): v for k, v in _flat_choices(choices)}
+        if not choices:
+            return ', '.join(_stringify(v) for v in values)
+        labels = {str(k): v for k, v in _flat_choices(choices)}
 
-    return ', '.join(
-        force_str(labels[str(v)]) if str(v) in labels else _stringify(v)
-        for v in values)
+    # str() for most keys; _stringify() for a NullBooleanSelect's 'true'/'false'.
+    shown = (labels.get(str(v), labels.get(_stringify(v))) for v in values)
+    return ', '.join(force_str(label) for label in shown if label is not None)
 
 
 def _is_heading(field, value):
