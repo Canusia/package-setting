@@ -19,7 +19,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.contrib.auth.signals import user_logged_in
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 from cis.models.settings import Setting
@@ -35,6 +35,8 @@ User = get_user_model()
 SETTING_APP = 'cis'
 SETTING_NAME = 'support_docs'
 SETTING_KEY = 'cis.settings.support_docs'
+# A deployment-wide (GLOBAL) key: superuser-only in multi-campus mode.
+GLOBAL_KEY = 'cis.settings.two_step'
 
 
 def _sfx():
@@ -139,15 +141,47 @@ class MultiCampusUpdateSettingTests(TestCase):
         self.record.refresh_from_db()
         self.assertEqual(self.record.title, 'Renamed')
 
-    def test_multi_campus_staff_cannot_change_shared_key_or_title(self):
+    def test_multi_campus_staff_cannot_change_global_key_or_title(self):
         from django.test import override_settings
+        from .models.setting import SettingRecord
+        record = SettingRecord.objects.create(
+            app='cis', name='two_step', title='Two Step', description='d')
+        Setting._base_manager.filter(key=GLOBAL_KEY).delete()
         with override_settings(MULTI_CAMPUS=True):
-            self.assertEqual(self._post(title='Renamed').status_code, 403)
-            self.assertEqual(
-                self._post(setting_value='{"types": []}').status_code, 403)
-        self.record.refresh_from_db()
-        self.assertEqual(self.record.title, 'Support Docs')
-        self.assertFalse(Setting.objects.filter(key=SETTING_KEY).exists())
+            for data in ({'title': 'Renamed'}, {'setting_value': '{"mode": "test"}'}):
+                request = self._request(record, **data)
+                response = self._call(request)
+                self.assertEqual(response.status_code, 403)
+        record.refresh_from_db()
+        self.assertEqual(record.title, 'Two Step')
+        self.assertFalse(Setting._base_manager.filter(key=GLOBAL_KEY).exists())
+
+    def test_multi_campus_staff_can_save_campus_key_on_own_row(self):
+        from django.test import override_settings
+        shared = Setting._base_manager.create(
+            key=SETTING_KEY, value={'types': ['Shared']}, campus=None)
+        with override_settings(MULTI_CAMPUS=True):
+            response = self._post(setting_value='{"types": []}')
+        self.assertEqual(response.status_code, 200, response.content)
+        own = Setting._base_manager.get(key=SETTING_KEY, campus=self.campus)
+        self.assertEqual(own.value.get('types'), [])
+        shared.refresh_from_db()
+        self.assertEqual(shared.value, {'types': ['Shared']})
+        self.assertIsNone(shared.campus_id)
+
+    def _request(self, record, **data):
+        from django.test import RequestFactory
+        request = RequestFactory().post('/', {
+            'record_id': str(record.id), 'title': record.title,
+            'description': 'd', **data})
+        request.user = self.user
+        return request
+
+    def _call(self, request):
+        from cis.campus_context import campus_context
+        from .views.views import update_setting
+        with campus_context(self.campus):
+            return update_setting(request)
 
 
 # --- Settings API (package-setting#4) ---------------------------------------
@@ -381,13 +415,9 @@ class SettingsAPITests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
 
-    def test_multi_campus_staff_cannot_write_shared_key(self):
+    def _campus_staff(self):
         from django.conf import settings as dj_settings
-        from rest_framework.test import APIRequestFactory, force_authenticate
-        from cis.campus_context import campus_context
         from cis.models.course import Campus
-        from .views.api import SettingDetailAPI
-
         campus = Campus.objects.create(
             name=f'C1-{_sfx()}', code=f'{dj_settings.CAMPUS_CODE_PREFIX}-{_sfx()}')
         staff = User.objects.create_user(
@@ -396,14 +426,42 @@ class SettingsAPITests(TestCase):
         staff.campus = {'manage_settings': 'Yes'}
         staff.save()
         staff.set_process_campuses([str(campus.id)])
+        return campus, staff
 
-        request = APIRequestFactory().patch(
-            '/', {'value': {'email_enabled': 'Yes'}}, format='json')
+    def _staff_patch(self, campus, staff, ref, value):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from cis.campus_context import campus_context
+        from .views.api import SettingDetailAPI
+        request = APIRequestFactory().patch('/', {'value': value}, format='json')
         force_authenticate(request, user=staff)
         with override_settings(MULTI_CAMPUS=True), campus_context(campus):
-            response = SettingDetailAPI.as_view()(request, ref=SETTING_KEY)
+            return SettingDetailAPI.as_view()(request, ref=ref)
+
+    def test_multi_campus_staff_cannot_write_global_key(self):
+        from .models.setting import SettingRecord
+        SettingRecord.objects.create(
+            app='cis', name='two_step', title='Two Step', description='d',
+            categories='1')
+        Setting._base_manager.filter(key=GLOBAL_KEY).delete()
+        shared = Setting._base_manager.create(
+            key=GLOBAL_KEY, value={'mode': 'active'}, campus=None)
+        campus, staff = self._campus_staff()
+        response = self._staff_patch(campus, staff, GLOBAL_KEY, {'mode': 'test'})
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(Setting.objects.get(key=SETTING_KEY).value['email_enabled'], 'No')
+        shared.refresh_from_db()
+        self.assertEqual(shared.value, {'mode': 'active'})
+
+    def test_multi_campus_staff_can_write_campus_key_to_own_row(self):
+        shared = Setting._base_manager.get(key=SETTING_KEY, campus=None)
+        before = dict(shared.value)
+        campus, staff = self._campus_staff()
+        response = self._staff_patch(
+            campus, staff, SETTING_KEY, {'email_enabled': 'Yes'})
+        self.assertEqual(response.status_code, 200, getattr(response, "data", None))
+        own = Setting._base_manager.get(key=SETTING_KEY, campus=campus)
+        self.assertEqual(own.value['email_enabled'], 'Yes')
+        shared.refresh_from_db()
+        self.assertEqual(shared.value, before)
 
     # -- #5: lookup and listing by configurator identifier --------------------
     DOCS_ID = 'cis:support_docs'
