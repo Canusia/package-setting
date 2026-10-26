@@ -102,6 +102,31 @@ class AddSettingInstallTests(TestCase):
         self.assertEqual(setting.value['statuses'], ['Approved'])
 
 
+@override_settings(MULTI_CAMPUS=True)
+class AddSettingSharedRowTests(TestCase):
+    """cis #129: defaults installed from the UI land on the shared row."""
+
+    def test_adding_a_campus_setting_installs_on_the_shared_row(self):
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from django.test import RequestFactory
+        from .views import views
+        user = User.objects.create_user(
+            username=f'ce_{_sfx()}', email=f'ce_{_sfx()}@x.com', password='x',
+            is_superuser=True)
+        user.groups.add(Group.objects.get_or_create(name='ce')[0])
+        Setting._base_manager.filter(key='cis.settings.hs_uploads').delete()
+        request = RequestFactory().post(reverse('setting:add_new'), {
+            'app': 'cis', 'name': 'hs_uploads', 'title': 't',
+            'description': 'd', 'categories': '1'})
+        request.user = user
+        request.session = {}
+        request._messages = FallbackStorage(request)
+        views.add_new(request)
+        row = Setting._base_manager.filter(key='cis.settings.hs_uploads').first()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row.campus_id)
+
+
 class MultiCampusUpdateSettingTests(TestCase):
     """cis #30 (MC-06): in multi-campus mode a campus's settings admin may
     change only that campus's settings; shared keys and the shared
@@ -579,3 +604,54 @@ class ScopeBadgeTests(TestCase):
             self.assertIn('Shared default', views._scope_badge('k'))
         with mock.patch.object(views, 'setting_scope_status', return_value=None):
             self.assertEqual(views._scope_badge('k'), '')
+
+
+class RegisterRecordsResilienceTests(TestCase):
+    def _clean(self, *names):
+        from .models.setting import SettingRecord
+        SettingRecord.objects.filter(name__in=names).delete()
+
+    def test_a_broken_record_does_not_stop_the_next_one(self):
+        from io import StringIO
+        from unittest import mock
+        from .management.commands import register_settings
+        from .management.commands.register_settings import Command
+        from .models.setting import SettingRecord
+        self._clean('no_such_setting_xyz', 'hs_uploads')
+        records = [
+            {'name': 'no_such_setting_xyz', 'title': 't', 'description': 'd',
+             'categories': [], 'app': 'cis'},
+            {'name': 'hs_uploads', 'title': 't', 'description': 'd',
+             'categories': [], 'app': 'cis'},
+        ]
+        with mock.patch('sys.stdout', new=StringIO()) as out, \
+                self.assertLogs(register_settings.logger.name, level='ERROR'):
+            Command().register(records)
+        self.assertIn('Skipping no_such_setting_xyz', out.getvalue())
+        self.assertFalse(SettingRecord.objects.filter(name='no_such_setting_xyz').exists())
+        self.assertTrue(SettingRecord.objects.filter(name='hs_uploads').exists())
+
+    @override_settings(MULTI_CAMPUS=True)
+    def test_strict_setting_installs_a_row_per_campus(self):
+        from django.conf import settings as dj_settings
+        from cis.models.course import Campus
+        from cis.models.settings import shared_settings
+        from .management.commands.register_settings import Command
+        from .models.setting import SettingRecord
+        self._clean('registrations')
+        campuses = [
+            Campus.objects.create(
+                name=f'C{i}-{_sfx()}',
+                code=f'{dj_settings.CAMPUS_CODE_PREFIX}-{_sfx()}')
+            for i in range(2)]
+        key = f'{dj_settings.CAMPUS_CODE_PREFIX}_cis_registrations'
+        Setting._base_manager.filter(key=key).delete()
+        with shared_settings():
+            Command().register([
+                {'name': 'registrations', 'title': 't', 'description': 'd',
+                 'categories': [], 'app': 'cis'}])
+        self.assertTrue(SettingRecord.objects.filter(name='registrations').exists())
+        for campus in campuses:
+            self.assertTrue(
+                Setting._base_manager.filter(key=key, campus=campus).exists(),
+                f'no row for {campus}')

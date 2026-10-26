@@ -20,7 +20,7 @@ from django.http import JsonResponse
 
 from django.utils.html import format_html
 
-from cis.models.settings import Setting, setting_scope_status
+from cis.models.settings import Setting, setting_scope_status, shared_settings
 from cis.utils import user_has_cis_role
 
 from crispy_forms.utils import render_crispy_form
@@ -95,8 +95,9 @@ def add_new(request):
                 # used to be reached unconditionally here, which would replace
                 # it (Canusia/package-setting#3). register_settings guards its
                 # own install() call the same way.
-                if not Setting.objects.filter(key=report.key).exists():
-                    report.install()
+                with shared_settings():
+                    if not Setting.objects.filter(key=report.key).exists():
+                        report.install()
             except Exception:
                 # Previously a bare `except: pass`, which reported success to
                 # the admin whatever happened -- and hid the fact that this
