@@ -59,6 +59,13 @@ class Command(BaseCommand):
                 print(f'\'{record["name"]}\' exists')
 
     def handle(self, *args, **kwargs):
+        # Per-campus settings (cis #129) install their defaults on the shared
+        # row; with no campus set, reading them would otherwise raise.
+        from cis.models.settings import shared_settings
+        with shared_settings():
+            self._register_all()
+
+    def _register_all(self):
         apps = getattr(settings, 'INSTALLED_APPS')
         for app in apps:
             try:

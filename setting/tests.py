@@ -497,3 +497,27 @@ class ConfiguratorIdTests(SimpleTestCase):
     def test_module_without_settings_segment(self):
         from .views.api import configurator_id
         self.assertEqual(configurator_id(_fake_configurator('pkg.config', 'config')), 'pkg:config')
+
+
+# ---- Settings per campus (cis #129) ----
+
+@override_settings(MULTI_CAMPUS=True)
+class RegisterSettingsMultiCampusTests(TestCase):
+    def test_installs_campus_keys_on_the_shared_row_with_no_campus(self):
+        from io import StringIO
+        from django.core.management import call_command
+        call_command('register_settings', stdout=StringIO())
+        row = Setting._base_manager.filter(key='cis.settings.hs_uploads').first()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row.campus_id)
+
+
+@override_settings(MULTI_CAMPUS=True)
+class ScopeBadgeTests(TestCase):
+    def test_badge_names_the_source(self):
+        from unittest import mock
+        from .views import views
+        with mock.patch.object(views, 'setting_scope_status', return_value='shared'):
+            self.assertIn('Shared default', views._scope_badge('k'))
+        with mock.patch.object(views, 'setting_scope_status', return_value=None):
+            self.assertEqual(views._scope_badge('k'), '')
