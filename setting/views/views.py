@@ -18,7 +18,9 @@ from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import JsonResponse
 
-from cis.models.settings import Setting
+from django.utils.html import format_html
+
+from cis.models.settings import Setting, setting_scope_status
 from cis.utils import user_has_cis_role
 
 from crispy_forms.utils import render_crispy_form
@@ -173,6 +175,21 @@ def records_in_category(request):
     return JsonResponse(records_available)
 
 
+_SCOPE_BADGES = {
+    'own': ('badge-primary', 'This campus'),
+    'shared': ('badge-secondary', 'Shared default \u2014 saving creates this campus\'s copy'),
+    'global': ('badge-dark', 'All campuses'),
+}
+
+
+def _scope_badge(key):
+    label = _SCOPE_BADGES.get(setting_scope_status(key))
+    if label is None:
+        return ''
+    css, text = label
+    return format_html('<span class="badge {} ml-2">{}</span>', css, text)
+
+
 def record_details(request, report_id=None):
 
     if not _user_can_manage_settings(request.user):
@@ -213,6 +230,7 @@ def record_details(request, report_id=None):
                 'record_id': str(report.id),
                 'setting_json': setting_json,
                 'setting_key': report_class.key,
+                'scope_badge': _scope_badge(report_class.key),
             }
         )
         data = {

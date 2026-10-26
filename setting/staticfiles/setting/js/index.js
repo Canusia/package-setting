@@ -528,10 +528,11 @@ function do_bulk_action(setting, field) {
             data: $(form).serialize(),
             error: function (xhr, status, errorThrown) {
                 $.unblockUI();
-                var errors = $.parseJSON(xhr.responseJSON.errors);
+                var body = xhr.responseJSON || {};
+                var errors = body.errors ? $.parseJSON(body.errors) : {};
 
                 var span = document.createElement('span');
-                span.innerHTML = xhr.responseJSON.message;
+                span.innerHTML = body.message || 'Unable to save the setting.';
 
                 var first_element = '';
                 for (var name in errors) {
@@ -553,7 +554,7 @@ function do_bulk_action(setting, field) {
                 }
 
                 swal({
-                    title: xhr.responseJSON.message,
+                    title: body.message || 'Unable to save the setting.',
                     content: span,
                     icon: 'warning'
                 });
